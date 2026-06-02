@@ -75,7 +75,9 @@ impl std::fmt::Display for ShipError {
 }
 
 fn execute(args: cli::ShipArgs) -> Result<i32, ShipError> {
-    match git::is_dirty() {
+    let cwd = std::env::current_dir().map_err(|e| ShipError::Io(e.to_string()))?;
+
+    match git::is_dirty(&cwd) {
         Ok(false) => {
             println!("Nothing to commit.");
             return Ok(0);
@@ -85,19 +87,19 @@ fn execute(args: cli::ShipArgs) -> Result<i32, ShipError> {
         Err(e) => return Err(ShipError::Io(format!("{e:?}"))),
     }
 
-    let branch = match branch::current_branch() {
+    let branch = match branch::current_branch(&cwd) {
         Ok(b) => b,
         Err(branch::BranchError::DetachedHead) => return Err(ShipError::DetachedHead),
         Err(branch::BranchError::NotAGitRepo) => return Err(ShipError::NotARepo),
         Err(e) => return Err(ShipError::Io(format!("{e:?}"))),
     };
     let ticket = branch::extract_ticket(&branch);
-    let diff_stat = git::diff_stat_summary().unwrap_or_default();
+    let diff_stat = git::diff_stat_summary(&cwd).unwrap_or_default();
 
     let (candidates, session_path) = if args.message.is_some() {
         (Vec::new(), None)
     } else {
-        load_candidates(args.session.as_deref())?
+        load_candidates(&cwd, args.session.as_deref())?
     };
 
     if args.message.is_none() && candidates.is_empty() {
@@ -129,11 +131,11 @@ fn execute(args: cli::ShipArgs) -> Result<i32, ShipError> {
         }
 
         if args.force {
-            return commit_and_push(&message, !args.no_push);
+            return commit_and_push(&cwd, &message, !args.no_push);
         }
 
         match prompt()? {
-            PromptResult::Yes => return commit_and_push(&message, !args.no_push),
+            PromptResult::Yes => return commit_and_push(&cwd, &message, !args.no_push),
             PromptResult::No => return Ok(1),
             PromptResult::Previous => {
                 if override_msg.is_some() {
@@ -163,9 +165,9 @@ fn execute(args: cli::ShipArgs) -> Result<i32, ShipError> {
 }
 
 fn load_candidates(
+    cwd: &Path,
     session_id: Option<&str>,
 ) -> Result<(Vec<String>, Option<PathBuf>), ShipError> {
-    let cwd = std::env::current_dir().map_err(|e| ShipError::Io(e.to_string()))?;
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| ShipError::Io("$HOME not set".into()))?;
@@ -173,7 +175,7 @@ fn load_candidates(
 
     let session_path = match session_id {
         Some(id) => {
-            let encoded = crate::encode::encode_path(&cwd)
+            let encoded = crate::encode::encode_path(cwd)
                 .ok_or_else(|| ShipError::Io("cwd is not valid UTF-8".into()))?;
             let path = claude_home
                 .join("projects")
@@ -187,7 +189,7 @@ fn load_candidates(
             }
             path
         }
-        None => session::newest_session_path(&claude_home, &cwd).ok_or_else(|| {
+        None => session::newest_session_path(&claude_home, cwd).ok_or_else(|| {
             ShipError::NoSession(
                 "no session JSONL found for this directory; use -m to override".into(),
             )
@@ -296,20 +298,20 @@ fn read_line() -> Result<String, ShipError> {
     Ok(line)
 }
 
-fn commit_and_push(message: &str, push: bool) -> Result<i32, ShipError> {
-    git::add_all().map_err(|e| ShipError::Io(format!("git add failed: {e:?}")))?;
+fn commit_and_push(cwd: &Path, message: &str, push: bool) -> Result<i32, ShipError> {
+    git::add_all(cwd).map_err(|e| ShipError::Io(format!("git add failed: {e:?}")))?;
 
-    let sha = match git::commit(message) {
+    let sha = match git::commit(cwd, message) {
         Ok(sha) => sha,
         Err(git::GitError::HookFailed { stderr }) => return Err(ShipError::HookFailed(stderr)),
         Err(e) => return Err(ShipError::GitFailed(format!("{e:?}"))),
     };
 
     if push {
-        let result = if git::has_upstream() {
-            git::push()
+        let result = if git::has_upstream(cwd) {
+            git::push(cwd)
         } else {
-            git::push_set_upstream()
+            git::push_set_upstream(cwd)
         };
         if let Err(git::GitError::GitFailed { command, stderr }) = result {
             return Err(ShipError::GitFailed(format!("{command} failed:\n{stderr}")));

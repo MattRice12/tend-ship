@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::{Command, Output};
 
 #[derive(Debug)]
@@ -17,29 +18,30 @@ impl From<std::io::Error> for GitError {
 
 /// True if `git status --porcelain` produces any output (tracked changes
 /// or untracked files).
-pub fn is_dirty() -> Result<bool, GitError> {
-    let output = run(&["status", "--porcelain"])?;
+pub fn is_dirty(cwd: &Path) -> Result<bool, GitError> {
+    let output = run(cwd, &["status", "--porcelain"])?;
     Ok(!output.stdout.iter().all(|b| b.is_ascii_whitespace()))
 }
 
 /// One-line summary like "4 files changed, 87 insertions(+), 12 deletions(-)".
 /// Returns an empty string if the diff is empty.
-pub fn diff_stat_summary() -> Result<String, GitError> {
-    let output = run(&["diff", "--stat", "HEAD"])?;
+pub fn diff_stat_summary(cwd: &Path) -> Result<String, GitError> {
+    let output = run(cwd, &["diff", "--stat", "HEAD"])?;
     Ok(last_diff_stat_line(&output.stdout).to_string())
 }
 
 /// `git add -A`
-pub fn add_all() -> Result<(), GitError> {
-    run(&["add", "-A"])?;
+pub fn add_all(cwd: &Path) -> Result<(), GitError> {
+    run(cwd, &["add", "-A"])?;
     Ok(())
 }
 
 /// `git commit -m "<message>"`. Returns the new short SHA on success.
 /// Maps hook-failure exit codes to `HookFailed` so the caller can show
 /// the hook output verbatim.
-pub fn commit(message: &str) -> Result<String, GitError> {
+pub fn commit(cwd: &Path, message: &str) -> Result<String, GitError> {
     let output = Command::new("git")
+        .current_dir(cwd)
         .args(["commit", "-m", message])
         .output()?;
     if !output.status.success() {
@@ -49,12 +51,13 @@ pub fn commit(message: &str) -> Result<String, GitError> {
             stderr: combine_outputs(&stdout, &stderr),
         });
     }
-    short_sha()
+    short_sha(cwd)
 }
 
 /// True if HEAD has upstream tracking configured.
-pub fn has_upstream() -> bool {
+pub fn has_upstream(cwd: &Path) -> bool {
     Command::new("git")
+        .current_dir(cwd)
         .args(["rev-parse", "--abbrev-ref", "@{u}"])
         .output()
         .map(|o| o.status.success())
@@ -62,8 +65,8 @@ pub fn has_upstream() -> bool {
 }
 
 /// `git push`
-pub fn push() -> Result<(), GitError> {
-    let output = Command::new("git").arg("push").output()?;
+pub fn push(cwd: &Path) -> Result<(), GitError> {
+    let output = Command::new("git").current_dir(cwd).arg("push").output()?;
     if !output.status.success() {
         return Err(GitError::GitFailed {
             command: "git push".to_string(),
@@ -74,8 +77,9 @@ pub fn push() -> Result<(), GitError> {
 }
 
 /// `git push -u origin HEAD`
-pub fn push_set_upstream() -> Result<(), GitError> {
+pub fn push_set_upstream(cwd: &Path) -> Result<(), GitError> {
     let output = Command::new("git")
+        .current_dir(cwd)
         .args(["push", "-u", "origin", "HEAD"])
         .output()?;
     if !output.status.success() {
@@ -87,13 +91,28 @@ pub fn push_set_upstream() -> Result<(), GitError> {
     Ok(())
 }
 
-fn short_sha() -> Result<String, GitError> {
-    let output = run(&["rev-parse", "--short", "HEAD"])?;
+/// Path to the main repo's `.git` dir. From a worktree, this resolves
+/// back to the original repository's `.git`. Used to find the "common"
+/// repo path when looking up sessions from a worktree.
+pub fn common_dir(cwd: &Path) -> Result<std::path::PathBuf, GitError> {
+    let output = run(cwd, &["rev-parse", "--git-common-dir"])?;
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let raw = std::path::PathBuf::from(&s);
+    let resolved = if raw.is_absolute() {
+        raw
+    } else {
+        cwd.join(raw)
+    };
+    Ok(resolved)
+}
+
+fn short_sha(cwd: &Path) -> Result<String, GitError> {
+    let output = run(cwd, &["rev-parse", "--short", "HEAD"])?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn run(args: &[&str]) -> Result<Output, GitError> {
-    let output = Command::new("git").args(args).output()?;
+fn run(cwd: &Path, args: &[&str]) -> Result<Output, GitError> {
+    let output = Command::new("git").current_dir(cwd).args(args).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("not a git repository") {

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 const TICKET_PREFIX: &str = "CO-";
@@ -11,9 +12,11 @@ pub enum BranchError {
     InvalidUtf8,
 }
 
-/// Returns the current branch name, or an error describing why we couldn't.
-pub fn current_branch() -> Result<String, BranchError> {
+/// Returns the current branch name of the repo at `cwd`, or an error
+/// describing why we couldn't.
+pub fn current_branch(cwd: &Path) -> Result<String, BranchError> {
     let output = Command::new("git")
+        .current_dir(cwd)
         .args(["symbolic-ref", "--short", "HEAD"])
         .output()
         .map_err(|e| BranchError::GitCommandFailed(e.to_string()))?;
