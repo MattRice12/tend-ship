@@ -1,0 +1,264 @@
+use assert_cmd::Command as TestCommand;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::TempDir;
+
+/// End-to-end happy path: a tempdir git repo with one staged change and a
+/// fixture JSONL on a fake HOME — `tend-ship ship --force` should commit
+/// and push to a bare-repo origin.
+#[test]
+fn force_commits_and_pushes_with_ticket_prefix() {
+    let world = TestWorld::new("CO-9999/e2e-happy-path");
+    world.write_fixture_session(
+        "session-abc",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Implement the feature and add tests"}]}}"#,
+    );
+    world.write_change("change.txt", "new content\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    let subject = remote_branch_subject(&world.remote, &world.branch);
+    assert_eq!(subject, "[CO-9999] Implement the feature and add tests");
+}
+
+/// Branch without a CO-XXXX prefix → no ticket, no `[…]` in the subject.
+#[test]
+fn no_ticket_prefix_when_branch_doesnt_match() {
+    let world = TestWorld::new("scratch/no-ticket-here");
+    world.write_fixture_session(
+        "session-noticket",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Made a quick fix"}]}}"#,
+    );
+    world.write_change("noted.txt", "x\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    assert_eq!(remote_branch_subject(&world.remote, &world.branch), "Made a quick fix");
+}
+
+/// `-m <text>` skips session reading entirely; subject prefix still applies.
+#[test]
+fn message_override_skips_session_reading() {
+    let world = TestWorld::new("CO-7777/override");
+    // Intentionally no session JSONL — `-m` should not require one.
+    world.write_change("a.txt", "1\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "-f", "-m", "Skip session and use this directly"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, &world.branch),
+        "[CO-7777] Skip session and use this directly",
+    );
+}
+
+/// `--no-push` commits locally but leaves origin untouched.
+#[test]
+fn no_push_keeps_remote_untouched() {
+    let world = TestWorld::new("CO-1111/no-push");
+    world.write_fixture_session(
+        "session-np",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Committed locally only"}]}}"#,
+    );
+    world.write_change("local.txt", "x\n");
+
+    let remote_head_before = remote_branch_sha(&world.remote, &world.branch);
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "--force", "--no-push"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    let remote_head_after = remote_branch_sha(&world.remote, &world.branch);
+    assert_eq!(
+        remote_head_before, remote_head_after,
+        "remote should not have moved with --no-push",
+    );
+
+    // Verify the commit IS on the local working tree
+    let local_subject = local_head_subject(&world.canonical_repo);
+    assert_eq!(local_subject, "[CO-1111] Committed locally only");
+}
+
+/// Clean tree → exit 0 with "Nothing to commit." — no commit, no push.
+#[test]
+fn nothing_to_commit_when_tree_is_clean() {
+    let world = TestWorld::new("CO-2222/clean");
+    let remote_head_before = remote_branch_sha(&world.remote, &world.branch);
+
+    let output = TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "tend-ship should succeed on clean tree");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with("Nothing to commit."),
+        "expected 'Nothing to commit.' got: {stdout}",
+    );
+
+    assert_eq!(remote_head_before, remote_branch_sha(&world.remote, &world.branch));
+}
+
+/// No JSONL for cwd → exit 2 with a hint to use -m.
+#[test]
+fn no_session_jsonl_exits_with_code_2() {
+    let world = TestWorld::new("CO-3333/no-session");
+    world.write_change("solo.txt", "x\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["ship", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .code(2);
+}
+
+// ---- Test harness ----------------------------------------------------------
+
+struct TestWorld {
+    home: TempDir,
+    _repo: TempDir,
+    canonical_repo: PathBuf,
+    remote: PathBuf,
+    _remote_dir: TempDir,
+    branch: String,
+}
+
+impl TestWorld {
+    fn new(branch: &str) -> Self {
+        let home = TempDir::new().unwrap();
+        let repo = TempDir::new().unwrap();
+        let remote_dir = TempDir::new().unwrap();
+        let remote = remote_dir.path().to_path_buf();
+        let canonical_repo = repo.path().canonicalize().unwrap();
+
+        // Bare remote
+        run_git(remote.parent().unwrap(), &["init", "--bare", remote.to_str().unwrap()]);
+
+        // Working repo (start on the requested branch)
+        run_git(&canonical_repo, &["init"]);
+        run_git(&canonical_repo, &["checkout", "-b", branch]);
+        run_git(&canonical_repo, &["config", "user.email", "test@example.com"]);
+        run_git(&canonical_repo, &["config", "user.name", "Test"]);
+        run_git(&canonical_repo, &["config", "commit.gpgsign", "false"]);
+        run_git(&canonical_repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+
+        // Initial commit so HEAD exists; push to remote so it has a base.
+        fs::write(canonical_repo.join("README.md"), "test\n").unwrap();
+        run_git(&canonical_repo, &["add", "."]);
+        run_git(&canonical_repo, &["commit", "-m", "initial"]);
+        run_git(&canonical_repo, &["push", "-u", "origin", "HEAD"]);
+
+        TestWorld {
+            home,
+            _repo: repo,
+            canonical_repo,
+            remote,
+            _remote_dir: remote_dir,
+            branch: branch.to_string(),
+        }
+    }
+
+    fn fixture_dir(&self) -> PathBuf {
+        let encoded = encode_path_for_test(&self.canonical_repo);
+        let dir = self.home.path().join(".claude/projects").join(encoded);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_fixture_session(&self, name: &str, jsonl: &str) {
+        let path = self.fixture_dir().join(format!("{name}.jsonl"));
+        // Ensure newline-terminated, matching real transcripts.
+        let contents = if jsonl.ends_with('\n') {
+            jsonl.to_string()
+        } else {
+            format!("{jsonl}\n")
+        };
+        fs::write(path, contents).unwrap();
+    }
+
+    fn write_change(&self, name: &str, contents: &str) {
+        fs::write(self.canonical_repo.join(name), contents).unwrap();
+    }
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let output = Command::new("git").current_dir(cwd).args(args).output().unwrap();
+    if !output.status.success() {
+        panic!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}
+
+fn encode_path_for_test(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .collect()
+}
+
+fn remote_branch_subject(remote: &Path, branch: &str) -> String {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            remote.to_str().unwrap(),
+            "log",
+            "-1",
+            "--pretty=%s",
+            &format!("refs/heads/{branch}"),
+        ])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn remote_branch_sha(remote: &Path, branch: &str) -> String {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            remote.to_str().unwrap(),
+            "rev-parse",
+            &format!("refs/heads/{branch}"),
+        ])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn local_head_subject(repo: &Path) -> String {
+    let out = Command::new("git")
+        .args(["-C", repo.to_str().unwrap(), "log", "-1", "--pretty=%s"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
