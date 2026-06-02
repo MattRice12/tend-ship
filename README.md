@@ -151,3 +151,5 @@ for the full contract.
 
 v0.1 — works for the author's CO-XXXX/branch-name workflow. See
 [DESIGN.md](./DESIGN.md) for the full spec.
+
+<!-- meta: tend-ship's own README -->
