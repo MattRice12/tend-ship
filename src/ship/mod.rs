@@ -1,4 +1,6 @@
 mod branch;
+mod cli;
+mod git;
 mod session;
 mod subject;
 
