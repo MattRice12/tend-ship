@@ -3,6 +3,7 @@ mod cli;
 mod git;
 mod session;
 mod subject;
+mod worktree;
 
 use clap::Parser;
 use std::io::{self, BufRead, Write};
@@ -90,7 +91,13 @@ impl std::fmt::Display for ShipError {
 fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
     let cwd = std::env::current_dir().map_err(|e| ShipError::Io(e.to_string()))?;
 
-    match git::is_dirty(&cwd) {
+    let target = match &args.worktree {
+        Some(input) => worktree::resolve(input, &cwd)
+            .map_err(|e| ShipError::NoSession(e.to_string()))?,
+        None => cwd.clone(),
+    };
+
+    match git::is_dirty(&target) {
         Ok(false) => {
             println!("Nothing to commit.");
             return Ok(0);
@@ -100,19 +107,19 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
         Err(e) => return Err(ShipError::Io(format!("{e:?}"))),
     }
 
-    let branch = match branch::current_branch(&cwd) {
+    let branch = match branch::current_branch(&target) {
         Ok(b) => b,
         Err(branch::BranchError::DetachedHead) => return Err(ShipError::DetachedHead),
         Err(branch::BranchError::NotAGitRepo) => return Err(ShipError::NotARepo),
         Err(e) => return Err(ShipError::Io(format!("{e:?}"))),
     };
     let ticket = branch::extract_ticket(&branch);
-    let diff_stat = git::diff_stat_summary(&cwd).unwrap_or_default();
+    let diff_stat = git::diff_stat_summary(&target).unwrap_or_default();
 
     let (candidates, session_path) = if args.message.is_some() {
         (Vec::new(), None)
     } else {
-        load_candidates(&cwd, args.session.as_deref())?
+        load_candidates(&target, args.session.as_deref())?
     };
 
     if args.message.is_none() && candidates.is_empty() {
@@ -144,12 +151,12 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
         }
 
         if args.force {
-            return commit_and_push(&cwd, &message, !args.no_push, push_mode);
+            return commit_and_push(&target, &message, !args.no_push, push_mode);
         }
 
         match prompt()? {
             PromptResult::Yes => {
-                return commit_and_push(&cwd, &message, !args.no_push, push_mode);
+                return commit_and_push(&target, &message, !args.no_push, push_mode);
             }
             PromptResult::No => return Ok(1),
             PromptResult::Previous => {

@@ -7,7 +7,11 @@ use clap::Parser;
     disable_version_flag = true
 )]
 pub struct ShipArgs {
-    /// Use a specific session JSONL instead of newest-for-cwd
+    /// Target worktree to ship (path or basename); defaults to cwd
+    #[arg(value_name = "WORKTREE")]
+    pub worktree: Option<String>,
+
+    /// Use a specific session JSONL instead of newest-for-target
     #[arg(short = 's', long = "session", value_name = "ID")]
     pub session: Option<String>,
 

@@ -22,37 +22,39 @@ pub fn run(argv: Vec<String>) -> i32 {
             println!("tend-ship {VERSION}");
             0
         }
-        Some(name) => exec_extension(name, &rest),
+        Some(name) => {
+            // Try a PATH-discovered extension first (`tend-ship-<name>`).
+            // If none exists, fall through to the default `push` subcommand
+            // with `<name>` as its positional WORKTREE argument.
+            let bin = format!("tend-ship-{name}");
+            match which(&bin) {
+                Some(path) => exec_extension(&path, name, &rest),
+                None => {
+                    let mut combined = Vec::with_capacity(rest.len() + 1);
+                    combined.push(name.to_string());
+                    combined.extend(rest);
+                    crate::ship::run(&combined, crate::ship::PushMode::Normal)
+                }
+            }
+        }
     }
 }
 
-fn exec_extension(name: &str, args: &[String]) -> i32 {
-    let bin = format!("tend-ship-{name}");
-    match which(&bin) {
-        Some(path) => {
-            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let claude_home = dirs_home().join(".claude");
-            let project_dir = encoded_project_dir(&cwd, &claude_home);
+fn exec_extension(path: &Path, _name: &str, args: &[String]) -> i32 {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let claude_home = dirs_home().join(".claude");
+    let project_dir = encoded_project_dir(&cwd, &claude_home);
 
-            let err = Command::new(&path)
-                .args(args)
-                .env("TEND_SHIP_VERSION", VERSION)
-                .env("TEND_SHIP_CWD", &cwd)
-                .env("TEND_SHIP_HOME", &claude_home)
-                .env("TEND_SHIP_PROJECT", project_dir.unwrap_or_default())
-                .exec();
+    let err = Command::new(path)
+        .args(args)
+        .env("TEND_SHIP_VERSION", VERSION)
+        .env("TEND_SHIP_CWD", &cwd)
+        .env("TEND_SHIP_HOME", &claude_home)
+        .env("TEND_SHIP_PROJECT", project_dir.unwrap_or_default())
+        .exec();
 
-            eprintln!("tend-ship: failed to exec {}: {err}", path.display());
-            127
-        }
-        None => {
-            eprintln!(
-                "tend-ship: '{name}' is not a tend-ship subcommand. \
-                 See 'tend-ship help'."
-            );
-            2
-        }
-    }
+    eprintln!("tend-ship: failed to exec {}: {err}", path.display());
+    127
 }
 
 pub fn which(name: &str) -> Option<PathBuf> {
