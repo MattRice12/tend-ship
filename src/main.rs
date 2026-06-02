@@ -1,4 +1,5 @@
 mod dispatch;
+mod encode;
 mod help;
 mod ship;
 

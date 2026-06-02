@@ -81,16 +81,7 @@ fn dirs_home() -> PathBuf {
 }
 
 fn encoded_project_dir(cwd: &Path, claude_home: &Path) -> Option<PathBuf> {
-    let encoded = encode_path(cwd)?;
+    let encoded = crate::encode::encode_path(cwd)?;
     let candidate = claude_home.join("projects").join(encoded);
     candidate.is_dir().then_some(candidate)
-}
-
-fn encode_path(path: &Path) -> Option<String> {
-    let s = path.to_str()?;
-    Some(
-        s.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
-            .collect(),
-    )
 }
