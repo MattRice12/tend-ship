@@ -28,14 +28,24 @@ pub fn newest_session_path(claude_home: &Path, cwd: &Path) -> Option<PathBuf> {
 /// A "crafted commit message" is the contents of a `git commit -m "<msg>"`
 /// substring found inside an assistant text block. This is the literal
 /// message Claude proposed in its response — no inference, no rewriting.
-pub fn candidates_reverse(jsonl: &str) -> Vec<String> {
+///
+/// When `ticket` is `Some("CO-1234")`, candidates whose subject begins with
+/// `[CO-1234]` are surfaced first (in newest-first order), then everything
+/// else (also newest-first). This keeps multi-ticket sessions usable from a
+/// single worktree: the auto-pick lands on a message that matches the branch,
+/// and `[p]revious` still walks the rest if you want them.
+pub fn candidates_reverse(jsonl: &str, ticket: Option<&str>) -> Vec<String> {
     let mut all = parse_assistant_texts(jsonl);
     all.reverse();
     let mut out = Vec::new();
     for text in all {
         out.extend(extract_commit_messages(&text));
     }
-    out
+    let Some(t) = ticket else { return out };
+    let needle = format!("[{t}]");
+    let (matching, other): (Vec<_>, Vec<_>) =
+        out.into_iter().partition(|m| m.starts_with(&needle));
+    matching.into_iter().chain(other).collect()
 }
 
 /// Walk a JSONL transcript and return every assistant-message text, in
@@ -185,7 +195,7 @@ Then:
         ]
         .join("\n");
         assert_eq!(
-            candidates_reverse(&jsonl),
+            candidates_reverse(&jsonl, None),
             vec!["[CO-2] second", "[CO-1] first"],
         );
     }
@@ -199,7 +209,7 @@ Then:
         ]
         .join("\n");
         assert_eq!(
-            candidates_reverse(&jsonl),
+            candidates_reverse(&jsonl, None),
             vec!["[CO-9] only one"],
         );
     }
@@ -212,8 +222,71 @@ Then:
         // original text — extract_commit_messages preserves document
         // order, and there's only one response so no reversal.
         assert_eq!(
-            candidates_reverse(jsonl),
+            candidates_reverse(jsonl, None),
             vec!["[CO-1] one", "[CO-2] two"],
+        );
+    }
+
+    // Mixed-ticket session: CO-1 was finished first, then CO-2 work happened.
+    // When shipping from a worktree on CO-1, the CO-1 message should auto-pick
+    // — but the CO-2 message is still reachable via [p].
+    #[test]
+    fn candidates_reverse_prefers_matching_ticket_when_present() {
+        let jsonl = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-1] one\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-2] two\""}]}}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            candidates_reverse(&jsonl, Some("CO-1")),
+            vec!["[CO-1] one", "[CO-2] two"],
+        );
+    }
+
+    // Within each tier, newest-first ordering is preserved.
+    #[test]
+    fn candidates_reverse_preserves_newest_first_within_each_tier() {
+        let jsonl = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-1] one-a\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-2] two-a\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-1] one-b\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-2] two-b\""}]}}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            candidates_reverse(&jsonl, Some("CO-1")),
+            vec!["[CO-1] one-b", "[CO-1] one-a", "[CO-2] two-b", "[CO-2] two-a"],
+        );
+    }
+
+    // Substring guard: ticket "CO-1" must not match "[CO-12] …" — the trailing
+    // `]` in the needle anchors the match to the full bracketed ticket.
+    #[test]
+    fn candidates_reverse_ticket_match_requires_closing_bracket() {
+        let jsonl = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-12] twelve\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-1] one\""}]}}"#,
+        ]
+        .join("\n");
+        // CO-12 must not be considered a CO-1 match; CO-1 takes the lead.
+        assert_eq!(
+            candidates_reverse(&jsonl, Some("CO-1")),
+            vec!["[CO-1] one", "[CO-12] twelve"],
+        );
+    }
+
+    // No commits match the branch's ticket → fall back to chronological order,
+    // exactly as if ticket were None. The user walks with [p] from the newest.
+    #[test]
+    fn candidates_reverse_no_matches_falls_back_to_chronological() {
+        let jsonl = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-2] two\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-3] three\""}]}}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            candidates_reverse(&jsonl, Some("CO-999")),
+            vec!["[CO-3] three", "[CO-2] two"],
         );
     }
 }

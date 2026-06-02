@@ -125,7 +125,7 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
     let (candidates, session_path) = if args.message.is_some() {
         (Vec::new(), None)
     } else {
-        load_candidates(&target, args.session.as_deref())?
+        load_candidates(&target, args.session.as_deref(), ticket.as_deref())?
     };
 
     if args.message.is_none() && candidates.is_empty() {
@@ -198,6 +198,7 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
 fn load_candidates(
     target: &Path,
     session_id: Option<&str>,
+    ticket: Option<&str>,
 ) -> Result<(Vec<String>, Option<PathBuf>), ShipError> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -238,7 +239,7 @@ fn load_candidates(
 
     let content = std::fs::read_to_string(&session_path)
         .map_err(|e| ShipError::Io(e.to_string()))?;
-    let candidates = session::candidates_reverse(&content);
+    let candidates = session::candidates_reverse(&content, ticket);
     Ok((candidates, Some(session_path)))
 }
 
