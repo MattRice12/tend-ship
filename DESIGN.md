@@ -36,30 +36,40 @@ LLM call; that path is explicitly out of scope.
 
 ## CLI
 
-`tend-ship` is structured as a small dispatcher with one built-in subcommand
-(`ship`) and PATH-based discovery for extensions. Invoking `tend-ship` with no
-subcommand defaults to `ship`.
+`tend-ship` is structured as a small dispatcher with two built-in subcommands
+(`push` and `pfwl`) and PATH-based discovery for extensions. Invoking
+`tend-ship` with no subcommand defaults to `push`. Both subcommands share the
+same flow; they differ only in how they push.
 
 ```
-tend-ship [SUBCOMMAND] [SUBCOMMAND-ARGS...]
+tend-ship [SUBCOMMAND] [WORKTREE] [OPTIONS]
 
 SUBCOMMANDS (built-in)
-  ship    Commit and push using the current Claude session's transcript
+  push    Commit and `git push` using the current Claude session
           (the default if no subcommand is given)
+  pfwl    Like push, but uses `git push --force-with-lease`
   help    Show usage and list discovered extensions
 
 EXTENSIONS (PATH-discovered)
   Any executable in PATH named `tend-ship-<name>` is invocable as
-  `tend-ship <name>`. See "Extensibility" below.
+  `tend-ship <name>`. If `<name>` is not a PATH extension, tend-ship falls
+  through to `push` with `<name>` treated as the positional WORKTREE arg.
 ```
 
-### `ship` subcommand
+### `push` and `pfwl` subcommands
+
+Both subcommands accept the same flags. The only behavioral difference is
+that `pfwl` adds `--force-with-lease` to the final `git push`.
 
 ```
-tend-ship [ship] [OPTIONS]
+tend-ship [push|pfwl] [WORKTREE] [OPTIONS]
+
+POSITIONAL
+  WORKTREE               Path or basename of a worktree to ship.
+                         Defaults to cwd.
 
 OPTIONS
-  -s, --session <id>     Use a specific session JSONL instead of newest-for-cwd
+  -s, --session <id>     Use a specific session JSONL instead of newest-for-target
   -m, --message <text>   Skip session reading; use <text> as the subject
   -f, --force            Skip confirmation; ship the auto-picked candidate
       --no-push          Commit but don't push
@@ -69,20 +79,31 @@ EXIT CODES
   0  Success or nothing-to-commit
   1  User aborted at confirmation
   2  No usable session (no JSONL, no candidates passing filter, detached HEAD,
-     not a git repo)
+     not a git repo, worktree name not resolvable)
   3  Git or hook failure (stderr forwarded verbatim)
 ```
 
 ## Behavior
 
-### `ship` (default subcommand)
+### `push` (default subcommand)
 
-The behavior of `tend-ship` and `tend-ship ship` is identical.
+The behavior of `tend-ship` and `tend-ship push` is identical. `pfwl` is the
+same flow except for the final `git push --force-with-lease`.
 
-1. Verify cwd is a git repo. If `git status --porcelain` is empty, print
+0. **Resolve target directory:**
+   - If a positional `WORKTREE` arg was passed and it looks like a path
+     (contains `/`, starts with `~`, `.`, or `/`), use it as-is.
+   - Else if `WORKTREE` was passed as a bare name, run `git worktree list
+     --porcelain` from cwd, find the worktree whose basename matches, and
+     use its path. Ambiguous or unfound matches → exit 2 with `available:
+     <list>`.
+   - Else, target = cwd.
+1. Verify target is a git repo. If `git status --porcelain` is empty, print
    `Nothing to commit.` and exit 0.
-2. Verify HEAD is on a branch (not detached); else exit 2 with a hint.
-3. Encode cwd path → `~/.claude/projects/<encoded>/`. Encoding rule:
+2. Verify HEAD on target is on a branch (not detached); else exit 2 with a
+   hint.
+3. **Locate session JSONL** (skipped if `-m` was passed). Encode target
+   → `~/.claude/projects/<encoded>/`. Encoding rule:
    - Each character in the absolute path that doesn't match `[A-Za-z0-9-]`
      becomes `-`. Existing `-` characters are preserved as-is.
    - Adjacent transformed characters produce adjacent `-`s (no collapsing).
@@ -92,9 +113,19 @@ The behavior of `tend-ship` and `tend-ship ship` is identical.
    Verified against the existing
    `~/.claude/projects/-Users-mattrice-programming-work-claims-dir--worktrees-CO-5281-controller-parser/`
    entry, which round-trips correctly with this rule.
-4. Pick the most recently-modified `*.jsonl` in that directory. If the dir
-   doesn't exist or contains no `*.jsonl` files, exit 2 with a hint to use
-   `-m`.
+4. Pick the most recently-modified `*.jsonl` in that directory.
+
+   **Fallback:** if the target's encoded directory doesn't exist or contains
+   no JSONL files, query `git rev-parse --git-common-dir` from the target.
+   For a worktree, this resolves to the *main repo's* `.git`. Take its
+   parent (the main repo path), encode that, and try again. This is the
+   common case where Claude Code was launched from the main repo and the
+   user is shipping a worktree.
+
+   If neither location has a session, exit 2 with a hint to use `-m`.
+
+   The fallback only applies when `-s <id>` is **not** passed; `-s` requires
+   the explicit project dir match.
 5. Read the JSONL into memory and walk lines in reverse. For each record
    where `type == "assistant"` and the message contains at least one text
    content block, extract the text and apply the **candidate filter**:
@@ -202,17 +233,17 @@ language; they don't link against tend-ship or import its code.
 
 ### Dispatch rules
 
-1. `tend-ship` with no args → run built-in `ship`.
-2. `tend-ship <name> [args...]` where `<name>` matches a built-in (`ship`,
-   `help`) → run that built-in with `[args...]`.
+1. `tend-ship` with no args → run built-in `push`.
+2. `tend-ship <name> [args...]` where `<name>` matches a built-in (`push`,
+   `pfwl`, `help`) → run that built-in with `[args...]`.
 3. `tend-ship <name> [args...]` where `<name>` is not a built-in → look up
    `tend-ship-<name>` in PATH:
    - Found → `exec` it with `[args...]`, with extension env vars set (see
      below). tend-ship is replaced by the extension process; the extension's
      exit code is the process exit code.
-   - Not found → print
-     `tend-ship: '<name>' is not a tend-ship subcommand. See 'tend-ship help'.`
-     and exit 2.
+   - Not found → fall through to `push` with `<name>` treated as the
+     positional `WORKTREE` argument. (This is how `tend-ship CO-5528-foo`
+     works without needing an explicit subcommand.)
 
 ### Environment passed to extensions
 

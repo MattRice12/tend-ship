@@ -42,12 +42,25 @@ session transcript that "looks like a summary" — short, not a question, not a
 mid-task narration. If the auto-pick isn't the one you want, hit `p` to walk
 back to an older candidate, or `m` to type your own subject.
 
-### Flags
+### Subcommands
 
 ```
-tend-ship ship [OPTIONS]
+tend-ship [push|pfwl] [WORKTREE] [OPTIONS]
 
-  -s, --session <ID>     Use a specific session JSONL instead of newest-for-cwd
+  push      Commit and `git push` using the current session (default)
+  pfwl      Like push, but uses `git push --force-with-lease`
+  help      Show usage and list installed extensions
+```
+
+If you omit the subcommand, `push` is assumed. `tend-ship` and `tend-ship push`
+are equivalent.
+
+### Flags (apply to both push and pfwl)
+
+```
+  WORKTREE               Positional: path or basename of a worktree to ship
+                         (defaults to cwd)
+  -s, --session <ID>     Use a specific session JSONL instead of newest-for-target
   -m, --message <TEXT>   Skip session reading; use this text as the subject
   -f, --force            Skip the prompt; ship the auto-picked candidate
       --no-push          Commit but don't push
@@ -55,41 +68,66 @@ tend-ship ship [OPTIONS]
 
 ### Examples
 
-Ship immediately with no preview prompt:
+Ship immediately with no prompt:
 ```sh
 tend-ship -f
 ```
 
-Override the subject entirely:
+Force-with-lease push (for branches you've rebased):
+```sh
+tend-ship pfwl -f
+```
+
+Ship a worktree by name from the main repo:
+```sh
+tend-ship CO-5528-consolidate-duplicate-vendor-rows
+```
+
+Override the subject:
 ```sh
 tend-ship -m "Backfill exposures for closed claims"
 ```
 
-Commit but don't push (useful for stacked-PR flows):
+Commit but don't push:
 ```sh
 tend-ship --no-push
 ```
 
-## Subcommands and extensions
+### Session lookup
 
-`tend-ship` is built as a tiny dispatcher around a `ship` subcommand. You can
-extend it with any executable in PATH named `tend-ship-<name>`:
+tend-ship looks for the session JSONL in two places, in order:
+
+1. The target directory's encoded path under `~/.claude/projects/<encoded>/`
+2. The target's *main repo* (resolved via `git rev-parse --git-common-dir`),
+   if the target is a worktree
+
+The fallback means you can run `tend-ship` from inside a worktree even when
+Claude Code was launched from the main repo and the session lives there. If
+neither directory has a session, use `-m <text>` to provide the subject
+manually.
+
+## Extensions
+
+`tend-ship` is built as a tiny dispatcher. Any executable in PATH named
+`tend-ship-<name>` is invocable as `tend-ship <name>`:
 
 ```sh
-tend-ship pr      # exec tend-ship-pr from PATH
-tend-ship test    # exec tend-ship-test from PATH
+tend-ship pr      # exec tend-ship-pr from PATH (if present)
 tend-ship help    # list installed extensions
 ```
 
 Extensions receive these env vars before exec:
 
 - `TEND_SHIP_VERSION` — current tend-ship version
-- `TEND_SHIP_CWD` — current working directory
+- `TEND_SHIP_CWD` — current working directory at invocation
 - `TEND_SHIP_HOME` — resolved `~/.claude/`
 - `TEND_SHIP_PROJECT` — encoded project dir under `~/.claude/projects/`, or
   empty if one doesn't exist for cwd
 
-Extensions own their own argument parsing, help, and exit codes.
+If `<name>` doesn't match a PATH extension, tend-ship falls through to `push`
+with `<name>` treated as the positional `WORKTREE` argument. So
+`tend-ship CO-5528-foo` will try `tend-ship-CO-5528-foo` first, then fall back
+to "ship the worktree named CO-5528-foo."
 
 ## Status
 
