@@ -22,6 +22,7 @@ fn force_commits_and_pushes_with_ticket_prefix() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -44,6 +45,7 @@ fn no_ticket_prefix_when_branch_doesnt_match() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -62,6 +64,7 @@ fn message_override_skips_session_reading() {
         .unwrap()
         .args(["push", "-f", "-m", "Skip session and use this directly"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -88,6 +91,7 @@ fn no_push_keeps_remote_untouched() {
         .unwrap()
         .args(["push", "--force", "--no-push"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -113,6 +117,7 @@ fn nothing_to_commit_when_tree_is_clean() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .output()
         .unwrap();
@@ -149,6 +154,7 @@ fn worktree_falls_back_to_main_repo_session() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&worktree)
         .assert()
         .success();
@@ -185,6 +191,7 @@ fn worktree_resolved_by_name_from_main_repo() {
         .unwrap()
         .args(["CO-5555-byname", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -219,6 +226,7 @@ fn tend_extension_envvars_drive_session_and_target() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .env("TEND_TRANSCRIPT", &jsonl_path)
         .env("TEND_PROJECT_DIR", &world.canonical_repo)
         // current_dir is somewhere else (would be where tend itself was launched)
@@ -255,6 +263,7 @@ fn positional_worktree_wins_over_tend_project_dir() {
         // `CO-8888-side` is the positional WORKTREE; it overrides TEND_PROJECT_DIR
         .args(["push", "CO-8888-side", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .env("TEND_TRANSCRIPT", &jsonl_path)
         .env("TEND_PROJECT_DIR", &world.canonical_repo)
         .current_dir(&world.canonical_repo)
@@ -281,6 +290,7 @@ fn pfwl_uses_force_with_lease() {
         .unwrap()
         .args(["pfwl", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
@@ -301,6 +311,7 @@ fn no_session_jsonl_exits_with_code_2() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
+        .env("TEND_SHIP_NO_APFEL", "1")
         .current_dir(&world.canonical_repo)
         .assert()
         .code(2);

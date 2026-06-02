@@ -39,6 +39,40 @@ cargo install --path . --force
 `--force` is what reinstalls over the existing binary; without it, cargo
 refuses to overwrite an already-installed `tend-ship`.
 
+## Setup
+
+tend-ship's auto-pick proposes a commit message from one of two sources, in
+order. Either path works on its own; both is fine.
+
+**1. apfel — Apple's on-device LLM CLI (preferred when installed).**
+If [apfel](https://github.com/Arthur-Ficial/apfel) is on your `PATH`,
+tend-ship hands it `git diff HEAD` and uses the one-line subject apfel
+returns. macOS 26+ on Apple Silicon, free, no network, no API keys.
+
+```sh
+brew install apfel
+```
+
+No further configuration. Set `TEND_SHIP_NO_APFEL=1` to disable apfel even
+when installed.
+
+**2. Claude's transcript (fallback or only path on non-Apple platforms).**
+tend-ship scans the session JSONL for the most recent
+`git commit -m "<subject>"` block Claude wrote and lifts the subject
+verbatim. For this to work, Claude has to actually write those blocks —
+add an instruction to your `~/.claude/CLAUDE.md` (or `<project>/CLAUDE.md`):
+
+> When you finish a task with uncommitted changes ready to ship, end your
+> response with a fenced `bash` block containing a single-line
+> `git commit -m "<imperative subject>"` command. Keep the subject under
+> 70 characters. No HEREDOC, no body, no multi-`-m`.
+
+If your branches follow a ticket-prefix convention (`PROJ-1234/desc`,
+`PROJ-1234-desc`, or just `PROJ-1234`), tend-ship will extract the ticket
+and prepend `[PROJ-1234] ` to manual `-m`/`[m]` subjects. The pattern is
+any leading `<UPPERCASE-LETTERS>-<digits>`; if your branches don't match,
+the prefix step is skipped silently.
+
 ## Usage
 
 From inside a worktree where Claude Code has been running:
@@ -55,11 +89,9 @@ Ship? [Y]es / [n]o / [p]revious / [m]essage override: y
 ✓ 8a3f912 [CO-5281] Move controller parsing into the shared module
 ```
 
-The proposed message is whatever Claude wrote in its most recent
-`git commit -m "<msg>"` block — Claude already crafts a commit message at
-the end of every response, so tend-ship just lifts it out of the transcript
-verbatim. If you'd rather use an older message Claude wrote, hit `p` to walk
-back. To type your own, hit `m` (or pass `-m "..."` from the start).
+`[p]revious` walks older candidates (both apfel and transcript sources).
+`[m]essage` lets you type your own subject; `-m "..."` from the start
+skips the prompt entirely.
 
 ### Subcommands
 
@@ -178,4 +210,4 @@ git for freshness, per tend's locators-not-snapshots principle.
 v0.1 — works for the author's CO-XXXX/branch-name workflow. See
 [DESIGN.md](./DESIGN.md) for the full spec.
 
-<!-- meta: this is tend-ship's own README -->
+<!-- meta: this file is tend-ship's own README -->

@@ -1,3 +1,4 @@
+mod apfel;
 mod branch;
 mod cli;
 mod git;
@@ -200,12 +201,19 @@ fn load_candidates(
     session_id: Option<&str>,
     ticket: Option<&str>,
 ) -> Result<(Vec<String>, Option<PathBuf>), ShipError> {
+    // apfel runs unconditionally and independently of the JSONL — it works
+    // straight from the diff. When apfel is installed, this is the primary
+    // path; transcript candidates follow as `[p]revious` walkbacks. When
+    // apfel isn't installed (or has nothing to say), this is a no-op and
+    // we fall through to the transcript-only behavior.
+    let apfel_candidate = apfel::synthesize(target).map(|s| compose_message(&s, ticket));
+
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| ShipError::Io("$HOME not set".into()))?;
     let claude_home = home.join(".claude");
 
-    let session_path = match session_id {
+    let session_path: Option<PathBuf> = match session_id {
         Some(id) => {
             // Explicit `-s` requires exact-target match — no fallback.
             let encoded = crate::encode::encode_path(target)
@@ -220,7 +228,7 @@ fn load_candidates(
                     path.display()
                 )));
             }
-            path
+            Some(path)
         }
         // If invoked as a tend extension, tend passes the chosen transcript
         // path via env var. Use it directly — no discovery, no fallback.
@@ -232,15 +240,29 @@ fn load_candidates(
                     p.display()
                 )));
             }
-            p
+            Some(p)
         }
-        None => find_session_with_fallback(&claude_home, target)?,
+        // Auto-discovery is tolerant: a missing JSONL is fine if apfel
+        // already gave us a candidate, so adopters without a Claude-writes-
+        // commit-m convention can still ship via apfel alone.
+        None => match find_session_with_fallback(&claude_home, target) {
+            Ok(p) => Some(p),
+            Err(_) if apfel_candidate.is_some() => None,
+            Err(e) => return Err(e),
+        },
     };
 
-    let content = std::fs::read_to_string(&session_path)
-        .map_err(|e| ShipError::Io(e.to_string()))?;
-    let candidates = session::candidates_reverse(&content, ticket);
-    Ok((candidates, Some(session_path)))
+    let mut candidates = Vec::new();
+    if let Some(c) = apfel_candidate {
+        candidates.push(c);
+    }
+    if let Some(path) = &session_path {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ShipError::Io(e.to_string()))?;
+        candidates.extend(session::candidates_reverse(&content, ticket));
+    }
+
+    Ok((candidates, session_path))
 }
 
 /// Look for a newest session JSONL in two places, in order:
