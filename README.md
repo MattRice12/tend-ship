@@ -18,8 +18,13 @@ cd tend-ship
 cargo install --path .
 ```
 
-After install, `tend-ship` is available anywhere `~/.cargo/bin` is in your
-PATH.
+`cargo install` builds two binaries from the same source:
+
+- `tend-ship` — the direct CLI you run yourself.
+- `tend-action-ship` — the same entry point under the name [tend](https://github.com/jah2488/tend)
+  uses for extension discovery. See [Use as a tend extension](#use-as-a-tend-extension).
+
+Both land in `~/.cargo/bin`, which should be on your PATH.
 
 ## Update
 
@@ -143,22 +148,30 @@ with `<name>` treated as the positional `WORKTREE` argument. So
 `tend-ship CO-5528-foo` will try `tend-ship-CO-5528-foo` first, then fall back
 to "ship the worktree named CO-5528-foo."
 
-## Tend integration
+## Use as a tend extension
 
-tend-ship also implements a speculative "invoked by tend" contract for the
-day tend grows an extension API. Set these env vars and tend-ship skips
-its own session discovery:
+[tend](https://github.com/jah2488/tend) discovers extensions on PATH named
+`tend-action-<name>`. `cargo install --path .` ships `tend-action-ship`
+alongside `tend-ship`, so once tend-ship is installed tend will pick it up
+automatically and offer "Ship" in its action menu for terminal sessions on
+a branch.
 
-| Variable             | Meaning                                       |
-| -------------------- | --------------------------------------------- |
-| `TEND_SESSION_JSONL` | Path to the chosen session's `*.jsonl` file (also the discriminator) |
-| `TEND_SESSION_CWD`   | Original cwd Claude was launched from         |
-| `TEND_VERSION`       | Version of the invoking tool (informational)  |
+The handshake (defined by [tend's extension contract](https://github.com/jah2488/tend#extensions)):
 
-tend-ship reads the JSONL fresh from disk on every invocation — even
-under extension mode — so it stays correct if tend hasn't refreshed its
-view recently. See [DESIGN.md](./DESIGN.md#tend-integration-proposed-inbound-contract)
-for the full contract.
+- `tend-action-ship --tend-describe` prints one line of JSON declaring the
+  display name (`Ship`), suggested key (`S`), and applicability filter
+  (`source: terminal`, `has_branch: true`). Run `tend --list-actions` to
+  confirm tend picked it up.
+- When you pick "Ship" in tend's menu, tend exports session locators as
+  env vars before exec'ing the binary. tend-ship honors:
+  - `TEND_TRANSCRIPT` — absolute path to the session's JSONL, used
+    directly (no discovery, no fallback)
+  - `TEND_PROJECT_DIR` — the session's worktree-resolved cwd, used as
+    the git target unless a positional WORKTREE arg overrides it
+
+Other tend env vars (`TEND_GIT_BRANCH`, `TEND_WORKTREE`, `TEND_SESSION_ID`,
+…) are present but unread — tend-ship re-derives whatever it needs from
+git for freshness, per tend's locators-not-snapshots principle.
 
 ## Status
 

@@ -22,6 +22,16 @@ pub fn run(argv: Vec<String>) -> i32 {
             println!("tend-ship {VERSION}");
             0
         }
+        // tend invokes this once at discovery time and parses one line of JSON
+        // from stdout. `description` is ignored by tend today (extras are
+        // tolerated) but useful for `tend --list-actions` output and any future
+        // menu enrichment.
+        Some("--tend-describe") => {
+            println!(
+                r#"{{"name":"Ship","key":"S","description":"Commit and push using the session's last commit message","when":{{"source":"terminal","has_branch":true}}}}"#
+            );
+            0
+        }
         Some(name) => {
             // Try a PATH-discovered extension first (`tend-ship-<name>`).
             // If none exists, fall through to the default `push` subcommand

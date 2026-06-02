@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo test *)"
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(./target/debug/tend-ship --tend-describe)",
+      "Bash(./target/debug/tend-action-ship --tend-describe)",
+      "Bash(python3 -c \"import json,sys; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\('parsed:', d\\)\")",
+      "Bash(tend --list-actions)"
     ]
   }
 }

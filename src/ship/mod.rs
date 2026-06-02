@@ -92,12 +92,12 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
 
     // Target precedence:
     //   1. Positional WORKTREE arg
-    //   2. TEND_SESSION_CWD env var (set when invoked as a tend extension)
+    //   2. TEND_PROJECT_DIR env var (set when invoked as a tend extension)
     //   3. Process cwd
     let target = match &args.worktree {
         Some(input) => worktree::resolve(input, &cwd)
             .map_err(|e| ShipError::NoSession(e.to_string()))?,
-        None => match std::env::var_os("TEND_SESSION_CWD") {
+        None => match std::env::var_os("TEND_PROJECT_DIR") {
             Some(s) => PathBuf::from(s),
             None => cwd.clone(),
         },
@@ -222,13 +222,13 @@ fn load_candidates(
             }
             path
         }
-        // If invoked as a tend extension, tend passes the chosen JSONL
+        // If invoked as a tend extension, tend passes the chosen transcript
         // path via env var. Use it directly — no discovery, no fallback.
-        None if std::env::var_os("TEND_SESSION_JSONL").is_some() => {
-            let p = PathBuf::from(std::env::var_os("TEND_SESSION_JSONL").unwrap());
+        None if std::env::var_os("TEND_TRANSCRIPT").is_some() => {
+            let p = PathBuf::from(std::env::var_os("TEND_TRANSCRIPT").unwrap());
             if !p.is_file() {
                 return Err(ShipError::NoSession(format!(
-                    "TEND_SESSION_JSONL points at a missing file: {}",
+                    "TEND_TRANSCRIPT points at a missing file: {}",
                     p.display()
                 )));
             }

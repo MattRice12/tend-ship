@@ -195,9 +195,9 @@ fn worktree_resolved_by_name_from_main_repo() {
     );
 }
 
-/// Simulated tend invocation: `TEND_SESSION_JSONL` + `TEND_SESSION_CWD`
-/// set, no positional args. tend-ship should use the provided JSONL
-/// directly and run git against TEND_SESSION_CWD.
+/// Simulated tend invocation: `TEND_TRANSCRIPT` + `TEND_PROJECT_DIR`
+/// set, no positional args. tend-ship should use the provided transcript
+/// directly and run git against TEND_PROJECT_DIR.
 #[test]
 fn tend_extension_envvars_drive_session_and_target() {
     let world = TestWorld::new("CO-7000/from-tend");
@@ -219,8 +219,8 @@ fn tend_extension_envvars_drive_session_and_target() {
         .unwrap()
         .args(["push", "--force"])
         .env("HOME", world.home.path())
-        .env("TEND_SESSION_JSONL", &jsonl_path)
-        .env("TEND_SESSION_CWD", &world.canonical_repo)
+        .env("TEND_TRANSCRIPT", &jsonl_path)
+        .env("TEND_PROJECT_DIR", &world.canonical_repo)
         // current_dir is somewhere else (would be where tend itself was launched)
         .current_dir(world.home.path())
         .assert()
@@ -233,9 +233,9 @@ fn tend_extension_envvars_drive_session_and_target() {
 }
 
 /// Tend-extension env vars + positional WORKTREE: the positional should
-/// take precedence over TEND_SESSION_CWD for the git target.
+/// take precedence over TEND_PROJECT_DIR for the git target.
 #[test]
-fn positional_worktree_wins_over_tend_session_cwd() {
+fn positional_worktree_wins_over_tend_project_dir() {
     let world = TestWorld::new("CO-8000/main");
     let worktree = world.add_worktree("CO-8888-side", "CO-8888/side");
 
@@ -252,11 +252,11 @@ fn positional_worktree_wins_over_tend_session_cwd() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        // `CO-8888-side` is the positional WORKTREE; it overrides TEND_SESSION_CWD
+        // `CO-8888-side` is the positional WORKTREE; it overrides TEND_PROJECT_DIR
         .args(["push", "CO-8888-side", "--force"])
         .env("HOME", world.home.path())
-        .env("TEND_SESSION_JSONL", &jsonl_path)
-        .env("TEND_SESSION_CWD", &world.canonical_repo)
+        .env("TEND_TRANSCRIPT", &jsonl_path)
+        .env("TEND_PROJECT_DIR", &world.canonical_repo)
         .current_dir(&world.canonical_repo)
         .assert()
         .success();
