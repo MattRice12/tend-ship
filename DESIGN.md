@@ -221,6 +221,49 @@ Replaces step 4. Instead of picking the newest JSONL, use the file at
 `~/.claude/projects/<encoded>/<id>.jsonl`. If the file doesn't exist, exit 2
 with a hint. All other steps unchanged.
 
+## Tend integration (proposed inbound contract)
+
+In addition to being a standalone CLI, tend-ship implements a speculative
+contract for being invoked *by tend* as an extension. tend does not yet
+have an extension API; this contract describes what tend-ship would honor
+if tend ever did. The standalone path is unchanged and remains the
+primary way to use the tool.
+
+### Inbound env vars (read by tend-ship)
+
+If the env var below is present, tend-ship treats itself as invoked-by-tend
+and skips the cwd-based session discovery in favor of the explicit values.
+
+| Variable             | Meaning                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `TEND_SESSION_JSONL` | Absolute path to the chosen session's `*.jsonl` file. **Discriminator** — if set, extension mode is active. |
+| `TEND_SESSION_CWD`   | Absolute path of the original cwd Claude was launched from. Used as the git target if no positional WORKTREE arg was passed. |
+| `TEND_VERSION`       | Version string of the invoking tend, for diagnostic purposes only. Not currently used by tend-ship. |
+
+### Behavior under extension mode
+
+- The `WORKTREE` positional arg, if present, still wins for the git target.
+- The session JSONL at `TEND_SESSION_JSONL` is read **fresh from disk** on
+  every invocation. tend-ship never trusts a cached or snapshot view from
+  tend — this guarantees correctness even if tend's monitoring loop has
+  gone dormant or is showing stale data.
+- The cwd-based fallback (worktree → main-repo via `git rev-parse
+  --git-common-dir`) is not used; tend has already chosen the session.
+- Explicit `-s <id>` from the user still overrides — same precedence as
+  standalone.
+
+### Why this is a forward-compatibility hook
+
+The tend project doesn't currently invoke external tools. We've defined
+this contract so that:
+
+1. tend-ship's behavior is documented for any future tool that wants to
+   drive it (not just tend — anything setting `TEND_SESSION_JSONL` works).
+2. If tend ever grows an extension API and uses these env var names,
+   tend-ship is a drop-in extension with no code changes.
+3. If tend's eventual API uses different env var names, the adapter
+   needed is a one-line rename in `ship/mod.rs::execute`.
+
 ## Extensibility
 
 tend-ship supports third-party subcommands via the same convention git, cargo,

@@ -130,6 +130,23 @@ with `<name>` treated as the positional `WORKTREE` argument. So
 `tend-ship CO-5528-foo` will try `tend-ship-CO-5528-foo` first, then fall back
 to "ship the worktree named CO-5528-foo."
 
+## Tend integration
+
+tend-ship also implements a speculative "invoked by tend" contract for the
+day tend grows an extension API. Set these env vars and tend-ship skips
+its own session discovery:
+
+| Variable             | Meaning                                       |
+| -------------------- | --------------------------------------------- |
+| `TEND_SESSION_JSONL` | Path to the chosen session's `*.jsonl` file (also the discriminator) |
+| `TEND_SESSION_CWD`   | Original cwd Claude was launched from         |
+| `TEND_VERSION`       | Version of the invoking tool (informational)  |
+
+tend-ship reads the JSONL fresh from disk on every invocation — even
+under extension mode — so it stays correct if tend hasn't refreshed its
+view recently. See [DESIGN.md](./DESIGN.md#tend-integration-proposed-inbound-contract)
+for the full contract.
+
 ## Status
 
 v0.1 — works for the author's CO-XXXX/branch-name workflow. See

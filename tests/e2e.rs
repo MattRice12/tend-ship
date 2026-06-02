@@ -195,6 +195,78 @@ fn worktree_resolved_by_name_from_main_repo() {
     );
 }
 
+/// Simulated tend invocation: `TEND_SESSION_JSONL` + `TEND_SESSION_CWD`
+/// set, no positional args. tend-ship should use the provided JSONL
+/// directly and run git against TEND_SESSION_CWD.
+#[test]
+fn tend_extension_envvars_drive_session_and_target() {
+    let world = TestWorld::new("CO-7000/from-tend");
+
+    // Stash the JSONL anywhere; tend would pass an absolute path so we
+    // don't even need it under the cwd-encoded directory.
+    let some_dir = world.home.path().join("anywhere");
+    fs::create_dir_all(&some_dir).unwrap();
+    let jsonl_path = some_dir.join("explicit.jsonl");
+    fs::write(
+        &jsonl_path,
+        assistant_text_jsonl(r#"git commit -m "[CO-7000] Invoked through tend""#),
+    )
+    .unwrap();
+
+    world.write_change("via-tend.txt", "x\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["push", "--force"])
+        .env("HOME", world.home.path())
+        .env("TEND_SESSION_JSONL", &jsonl_path)
+        .env("TEND_SESSION_CWD", &world.canonical_repo)
+        // current_dir is somewhere else (would be where tend itself was launched)
+        .current_dir(world.home.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, &world.branch),
+        "[CO-7000] Invoked through tend",
+    );
+}
+
+/// Tend-extension env vars + positional WORKTREE: the positional should
+/// take precedence over TEND_SESSION_CWD for the git target.
+#[test]
+fn positional_worktree_wins_over_tend_session_cwd() {
+    let world = TestWorld::new("CO-8000/main");
+    let worktree = world.add_worktree("CO-8888-side", "CO-8888/side");
+
+    let some_dir = world.home.path().join("tend-data");
+    fs::create_dir_all(&some_dir).unwrap();
+    let jsonl_path = some_dir.join("explicit.jsonl");
+    fs::write(
+        &jsonl_path,
+        assistant_text_jsonl(r#"git commit -m "[CO-8888] Side-worktree change""#),
+    )
+    .unwrap();
+
+    fs::write(worktree.join("here.txt"), "x\n").unwrap();
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        // `CO-8888-side` is the positional WORKTREE; it overrides TEND_SESSION_CWD
+        .args(["push", "CO-8888-side", "--force"])
+        .env("HOME", world.home.path())
+        .env("TEND_SESSION_JSONL", &jsonl_path)
+        .env("TEND_SESSION_CWD", &world.canonical_repo)
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, "CO-8888/side"),
+        "[CO-8888] Side-worktree change",
+    );
+}
+
 /// pfwl subcommand routes through to push --force-with-lease.
 #[test]
 fn pfwl_uses_force_with_lease() {
