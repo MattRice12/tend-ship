@@ -124,6 +124,95 @@ fn nothing_to_commit_when_tree_is_clean() {
     assert_eq!(remote_head_before, remote_branch_sha(&world.remote, &world.branch));
 }
 
+/// Fallback: run tend-ship from inside a worktree whose own encoded path
+/// has no session; tend-ship walks to the main repo via `--git-common-dir`
+/// and uses *that* repo's session.
+#[test]
+fn worktree_falls_back_to_main_repo_session() {
+    let world = TestWorld::new("CO-4000/main");
+    let worktree = world.add_worktree("CO-4444-side", "CO-4444/side");
+
+    // Session lives ONLY in the main repo's encoded dir, not the worktree's.
+    let main_session_dir = world.fixture_dir_for(&world.canonical_repo);
+    fs::write(
+        main_session_dir.join("main-session.jsonl"),
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Made the worktree edit\"}]}}\n",
+    )
+    .unwrap();
+
+    fs::write(worktree.join("from-worktree.txt"), "edit\n").unwrap();
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["push", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&worktree)
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, "CO-4444/side"),
+        "[CO-4444] Made the worktree edit",
+    );
+}
+
+/// Option 3: from the main repo, name a worktree by its basename and have
+/// tend-ship resolve it via `git worktree list` then operate on that
+/// worktree.
+#[test]
+fn worktree_resolved_by_name_from_main_repo() {
+    let world = TestWorld::new("CO-5000/main");
+    let worktree = world.add_worktree("CO-5555-byname", "CO-5555/byname");
+
+    // Session lives in the main repo's encoded dir (where Claude was launched).
+    let main_session_dir = world.fixture_dir_for(&world.canonical_repo);
+    fs::write(
+        main_session_dir.join("main-session.jsonl"),
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Made the change in the side worktree\"}]}}\n",
+    )
+    .unwrap();
+
+    fs::write(worktree.join("by-name.txt"), "edit\n").unwrap();
+
+    // Run from the MAIN repo, naming the worktree positionally.
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["CO-5555-byname", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, "CO-5555/byname"),
+        "[CO-5555] Made the change in the side worktree",
+    );
+}
+
+/// pfwl subcommand routes through to push --force-with-lease.
+#[test]
+fn pfwl_uses_force_with_lease() {
+    let world = TestWorld::new("CO-6000/fwl");
+    world.write_fixture_session(
+        "fwl-session",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Rewrote the history"}]}}"#,
+    );
+    world.write_change("rewrite.txt", "y\n");
+
+    TestCommand::cargo_bin("tend-ship")
+        .unwrap()
+        .args(["pfwl", "--force"])
+        .env("HOME", world.home.path())
+        .current_dir(&world.canonical_repo)
+        .assert()
+        .success();
+
+    assert_eq!(
+        remote_branch_subject(&world.remote, &world.branch),
+        "[CO-6000] Rewrote the history",
+    );
+}
+
 /// No JSONL for cwd → exit 2 with a hint to use -m.
 #[test]
 fn no_session_jsonl_exits_with_code_2() {
@@ -205,6 +294,24 @@ impl TestWorld {
 
     fn write_change(&self, name: &str, contents: &str) {
         fs::write(self.canonical_repo.join(name), contents).unwrap();
+    }
+
+    /// Create a worktree under `<main-repo>/.worktrees/<dir_name>` on
+    /// branch `branch_name`. Returns the canonicalized worktree path.
+    fn add_worktree(&self, dir_name: &str, branch_name: &str) -> PathBuf {
+        let wt_dir = self.canonical_repo.join(".worktrees").join(dir_name);
+        run_git(
+            &self.canonical_repo,
+            &["worktree", "add", "-b", branch_name, wt_dir.to_str().unwrap()],
+        );
+        wt_dir.canonicalize().unwrap()
+    }
+
+    fn fixture_dir_for(&self, path: &Path) -> PathBuf {
+        let encoded = encode_path_for_test(path);
+        let dir = self.home.path().join(".claude/projects").join(encoded);
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
 

@@ -187,7 +187,7 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
 }
 
 fn load_candidates(
-    cwd: &Path,
+    target: &Path,
     session_id: Option<&str>,
 ) -> Result<(Vec<String>, Option<PathBuf>), ShipError> {
     let home = std::env::var_os("HOME")
@@ -197,8 +197,9 @@ fn load_candidates(
 
     let session_path = match session_id {
         Some(id) => {
-            let encoded = crate::encode::encode_path(cwd)
-                .ok_or_else(|| ShipError::Io("cwd is not valid UTF-8".into()))?;
+            // Explicit `-s` requires exact-target match — no fallback.
+            let encoded = crate::encode::encode_path(target)
+                .ok_or_else(|| ShipError::Io("target is not valid UTF-8".into()))?;
             let path = claude_home
                 .join("projects")
                 .join(encoded)
@@ -211,17 +212,38 @@ fn load_candidates(
             }
             path
         }
-        None => session::newest_session_path(&claude_home, cwd).ok_or_else(|| {
-            ShipError::NoSession(
-                "no session JSONL found for this directory; use -m to override".into(),
-            )
-        })?,
+        None => find_session_with_fallback(&claude_home, target)?,
     };
 
     let content = std::fs::read_to_string(&session_path)
         .map_err(|e| ShipError::Io(e.to_string()))?;
     let candidates = session::candidates_reverse(&content);
     Ok((candidates, Some(session_path)))
+}
+
+/// Look for a newest session JSONL in two places, in order:
+///   1. The target directory itself
+///   2. The target's "main repo" (resolved via `git rev-parse --git-common-dir`)
+///      — relevant when target is a worktree and Claude Code was launched
+///      from the main repo.
+/// First hit wins. If neither has a session, returns `NoSession`.
+fn find_session_with_fallback(claude_home: &Path, target: &Path) -> Result<PathBuf, ShipError> {
+    if let Some(p) = session::newest_session_path(claude_home, target) {
+        return Ok(p);
+    }
+    if let Ok(common) = git::common_dir(target) {
+        if let Some(parent) = common.parent() {
+            let main = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            if main != target {
+                if let Some(p) = session::newest_session_path(claude_home, &main) {
+                    return Ok(p);
+                }
+            }
+        }
+    }
+    Err(ShipError::NoSession(
+        "no session JSONL found for this directory or its main repo; use -m to override".into(),
+    ))
 }
 
 fn compose_message(subject: &str, ticket: Option<&str>) -> String {
