@@ -73,6 +73,27 @@ and prepend `[PROJ-1234] ` to manual `-m`/`[m]` subjects. The pattern is
 any leading `<UPPERCASE-LETTERS>-<digits>`; if your branches don't match,
 the prefix step is skipped silently.
 
+### Optional: branch-keyed session lookup
+
+By default tend-ship locates the session JSONL via the directory Claude was
+launched from (and the worktree's main repo as a fallback). If you'd rather
+find sessions by *branch name* — useful when one Claude session spans
+multiple branches, or when Claude is launched from somewhere far from the
+worktree you're shipping from — install a small Claude Code Stop hook that
+maintains a branch-keyed mirror:
+
+1. Drop a script at `~/.claude/hooks/mirror-session-by-branch.sh` that
+   reads the Stop event's JSON payload (`session_id`, `transcript_path`,
+   `cwd`), resolves `git -C "$cwd" symbolic-ref --short HEAD`, and
+   `ln -sf`s the transcript into
+   `~/.claude/by-branch/<branch-with-/-and-.-replaced-by-->/<session>.jsonl`.
+2. Register it in `~/.claude/settings.json` under `hooks.Stop[].hooks`
+   with `type: "command"` and a short timeout (5s is plenty).
+
+tend-ship then consults that mirror as its third lookup tier (after the
+encoded-cwd path and the main-repo fallback). No hook → no harm; the tier
+just always misses.
+
 ## Usage
 
 From inside a worktree where Claude Code has been running:
@@ -146,16 +167,17 @@ tend-ship --no-push
 
 ### Session lookup
 
-tend-ship looks for the session JSONL in two places, in order:
+tend-ship looks for the session JSONL in three places, in order:
 
 1. The target directory's encoded path under `~/.claude/projects/<encoded>/`
 2. The target's *main repo* (resolved via `git rev-parse --git-common-dir`),
    if the target is a worktree
+3. The branch-keyed mirror under `~/.claude/by-branch/<branch>/`, when the
+   optional Stop hook is installed (see [Setup](#optional-branch-keyed-session-lookup))
 
-The fallback means you can run `tend-ship` from inside a worktree even when
-Claude Code was launched from the main repo and the session lives there. If
-neither directory has a session, use `-m <text>` to provide the subject
-manually.
+If none of those has a session, tend-ship still works as long as apfel is
+installed — apfel synthesizes a subject from the diff without needing a
+transcript. Otherwise, use `-m <text>` to provide the subject manually.
 
 ## Extensions
 

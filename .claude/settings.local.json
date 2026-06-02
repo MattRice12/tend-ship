@@ -7,7 +7,15 @@
       "Bash(./target/debug/tend-action-ship --tend-describe)",
       "Bash(python3 -c \"import json,sys; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\('parsed:', d\\)\")",
       "Bash(tend --list-actions)",
-      "Bash(apfel --version)"
+      "Bash(apfel --version)",
+      "Read(//Users/mattrice/.claude/**)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('hooks', {}\\), indent=2\\)\\)\")",
+      "Bash(chmod +x ~/.claude/hooks/mirror-session-by-branch.sh)",
+      "Bash(~/.claude/hooks/mirror-session-by-branch.sh)",
+      "Bash(rm -rf ~/.claude/by-branch/main)",
+      "Bash(rm -f ~/.claude/by-branch/.hook.log)",
+      "Bash(python3 *)"
     ]
   }
 }

@@ -8,8 +8,32 @@ const COMMIT_NEEDLE: &str = r#"git commit -m ""#;
 pub fn newest_session_path(claude_home: &Path, cwd: &Path) -> Option<PathBuf> {
     let encoded = crate::encode::encode_path(cwd)?;
     let project_dir = claude_home.join("projects").join(encoded);
+    newest_jsonl_in(&project_dir)
+}
 
-    let entries = std::fs::read_dir(&project_dir).ok()?;
+/// Locate the most recently-modified `*.jsonl` file (or symlink) under
+/// `<claude_home>/by-branch/<sanitize_branch(branch)>/`, the directory the
+/// optional `mirror-session-by-branch.sh` Stop hook maintains. Returns
+/// `None` if the directory doesn't exist or contains no entries.
+pub fn newest_session_by_branch(claude_home: &Path, branch: &str) -> Option<PathBuf> {
+    let dir = claude_home.join("by-branch").join(sanitize_branch(branch));
+    newest_jsonl_in(&dir)
+}
+
+/// Translate a git branch name into the directory-safe form
+/// `mirror-session-by-branch.sh` writes under `~/.claude/by-branch/`.
+///
+/// **Invariant:** this encoding must stay byte-identical to the hook script's
+/// (replace `/` and `.` with `-`). Changing either side without the other
+/// silently breaks the by-branch lookup.
+fn sanitize_branch(branch: &str) -> String {
+    branch.replace('/', "-").replace('.', "-")
+}
+
+/// Newest `*.jsonl` entry in `dir` by mtime, or `None` if the dir is missing
+/// or empty.
+fn newest_jsonl_in(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
     entries
         .flatten()
         .filter(|e| {
@@ -273,6 +297,19 @@ Then:
             candidates_reverse(&jsonl, Some("CO-1")),
             vec!["[CO-1] one", "[CO-12] twelve"],
         );
+    }
+
+    // The branch sanitizer must produce the exact directory name the Stop
+    // hook (`~/.claude/hooks/mirror-session-by-branch.sh`) writes under
+    // `~/.claude/by-branch/`. If either side changes, this test fails and the
+    // by-branch lookup silently breaks.
+    #[test]
+    fn sanitize_branch_matches_hook_encoding() {
+        use super::sanitize_branch;
+        assert_eq!(sanitize_branch("CO-5281/controller-parser"), "CO-5281-controller-parser");
+        assert_eq!(sanitize_branch("feat.x.y/foo"), "feat-x-y-foo");
+        assert_eq!(sanitize_branch("main"), "main");
+        assert_eq!(sanitize_branch("release/v1.2.3"), "release-v1-2-3");
     }
 
     // No commits match the branch's ticket → fall back to chronological order,

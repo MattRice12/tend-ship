@@ -265,12 +265,16 @@ fn load_candidates(
     Ok((candidates, session_path))
 }
 
-/// Look for a newest session JSONL in two places, in order:
-///   1. The target directory itself
+/// Look for a newest session JSONL in three places, in order:
+///   1. The target directory itself (encoded path under `~/.claude/projects/`)
 ///   2. The target's "main repo" (resolved via `git rev-parse --git-common-dir`)
 ///      — relevant when target is a worktree and Claude Code was launched
 ///      from the main repo.
-/// First hit wins. If neither has a session, returns `NoSession`.
+///   3. The branch-keyed mirror under `~/.claude/by-branch/<branch>/`,
+///      maintained by the optional `mirror-session-by-branch.sh` Stop hook —
+///      a last-resort lookup that finds sessions by branch name regardless
+///      of where Claude was launched. No-op if the hook isn't installed.
+/// First hit wins. If none have a session, returns `NoSession`.
 fn find_session_with_fallback(claude_home: &Path, target: &Path) -> Result<PathBuf, ShipError> {
     if let Some(p) = session::newest_session_path(claude_home, target) {
         return Ok(p);
@@ -283,6 +287,11 @@ fn find_session_with_fallback(claude_home: &Path, target: &Path) -> Result<PathB
                     return Ok(p);
                 }
             }
+        }
+    }
+    if let Ok(branch) = branch::current_branch(target) {
+        if let Some(p) = session::newest_session_by_branch(claude_home, &branch) {
+            return Ok(p);
         }
     }
     Err(ShipError::NoSession(
