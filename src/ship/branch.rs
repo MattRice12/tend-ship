@@ -3,6 +3,7 @@ use std::process::Command;
 const TICKET_PREFIX: &str = "CO-";
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum BranchError {
     DetachedHead,
     NotAGitRepo,

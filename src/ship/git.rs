@@ -1,6 +1,7 @@
 use std::process::{Command, Output};
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum GitError {
     NotARepo,
     HookFailed { stderr: String },
