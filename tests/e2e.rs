@@ -18,7 +18,7 @@ fn force_commits_and_pushes_with_ticket_prefix() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "--force"])
+        .args(["push", "--force"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .assert()
@@ -40,7 +40,7 @@ fn no_ticket_prefix_when_branch_doesnt_match() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "--force"])
+        .args(["push", "--force"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .assert()
@@ -58,7 +58,7 @@ fn message_override_skips_session_reading() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "-f", "-m", "Skip session and use this directly"])
+        .args(["push", "-f", "-m", "Skip session and use this directly"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .assert()
@@ -84,7 +84,7 @@ fn no_push_keeps_remote_untouched() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "--force", "--no-push"])
+        .args(["push", "--force", "--no-push"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .assert()
@@ -109,7 +109,7 @@ fn nothing_to_commit_when_tree_is_clean() {
 
     let output = TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "--force"])
+        .args(["push", "--force"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .output()
@@ -132,7 +132,7 @@ fn no_session_jsonl_exits_with_code_2() {
 
     TestCommand::cargo_bin("tend-ship")
         .unwrap()
-        .args(["ship", "--force"])
+        .args(["push", "--force"])
         .env("HOME", world.home.path())
         .current_dir(&world.canonical_repo)
         .assert()

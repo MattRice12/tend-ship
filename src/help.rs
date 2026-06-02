@@ -12,7 +12,8 @@ pub fn print_help() {
     println!("    tend-ship [SUBCOMMAND] [ARGS...]");
     println!();
     println!("BUILT-IN SUBCOMMANDS:");
-    println!("    ship      Commit and push using the current session (default)");
+    println!("    push      Commit and `git push` using the current session (default)");
+    println!("    pfwl      Like push, but uses `git push --force-with-lease`");
     println!("    help      Show this help");
     println!();
     println!("EXTENSIONS (PATH-discovered):");
@@ -31,7 +32,7 @@ pub fn print_help() {
     println!("    -h, --help        Show this help");
     println!("    -V, --version     Show version");
     println!();
-    println!("Run `tend-ship ship --help` for ship-subcommand options.");
+    println!("Run `tend-ship push --help` for subcommand options (same flags apply to pfwl).");
 }
 
 fn discover_extensions() -> Vec<String> {

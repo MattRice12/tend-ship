@@ -64,27 +64,32 @@ pub fn has_upstream(cwd: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// `git push`
-pub fn push(cwd: &Path) -> Result<(), GitError> {
-    let output = Command::new("git").current_dir(cwd).arg("push").output()?;
+/// `git push [--force-with-lease]`
+pub fn push(cwd: &Path, force_with_lease: bool) -> Result<(), GitError> {
+    let mut args = vec!["push"];
+    if force_with_lease {
+        args.push("--force-with-lease");
+    }
+    let output = Command::new("git").current_dir(cwd).args(&args).output()?;
     if !output.status.success() {
         return Err(GitError::GitFailed {
-            command: "git push".to_string(),
+            command: format!("git {}", args.join(" ")),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }
     Ok(())
 }
 
-/// `git push -u origin HEAD`
-pub fn push_set_upstream(cwd: &Path) -> Result<(), GitError> {
-    let output = Command::new("git")
-        .current_dir(cwd)
-        .args(["push", "-u", "origin", "HEAD"])
-        .output()?;
+/// `git push -u origin HEAD [--force-with-lease]`
+pub fn push_set_upstream(cwd: &Path, force_with_lease: bool) -> Result<(), GitError> {
+    let mut args = vec!["push", "-u", "origin", "HEAD"];
+    if force_with_lease {
+        args.push("--force-with-lease");
+    }
+    let output = Command::new("git").current_dir(cwd).args(&args).output()?;
     if !output.status.success() {
         return Err(GitError::GitFailed {
-            command: "git push -u origin HEAD".to_string(),
+            command: format!("git {}", args.join(" ")),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }

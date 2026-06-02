@@ -11,8 +11,9 @@ pub fn run(argv: Vec<String>) -> i32 {
     let rest: Vec<String> = iter.collect();
 
     match first.as_deref() {
-        None => crate::ship::run(&[]),
-        Some("ship") => crate::ship::run(&rest),
+        None => crate::ship::run(&[], crate::ship::PushMode::Normal),
+        Some("push") => crate::ship::run(&rest, crate::ship::PushMode::Normal),
+        Some("pfwl") => crate::ship::run(&rest, crate::ship::PushMode::ForceWithLease),
         Some("help") | Some("--help") | Some("-h") => {
             crate::help::print_help();
             0
