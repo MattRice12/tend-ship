@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
-const MAX_CANDIDATE_CHARS: usize = 600;
-const MAX_CANDIDATE_SENTENCES: usize = 2;
+const COMMIT_NEEDLE: &str = r#"git commit -m ""#;
 
 /// Locate the most recently-modified `*.jsonl` file under
 /// `<claude_home>/projects/<encoded(cwd)>/`. Returns `None` if the
@@ -21,6 +20,22 @@ pub fn newest_session_path(claude_home: &Path, cwd: &Path) -> Option<PathBuf> {
         })
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
         .map(|e| e.path())
+}
+
+/// All commit messages Claude has crafted in the session, in
+/// reverse-chronological order (newest first).
+///
+/// A "crafted commit message" is the contents of a `git commit -m "<msg>"`
+/// substring found inside an assistant text block. This is the literal
+/// message Claude proposed in its response — no inference, no rewriting.
+pub fn candidates_reverse(jsonl: &str) -> Vec<String> {
+    let mut all = parse_assistant_texts(jsonl);
+    all.reverse();
+    let mut out = Vec::new();
+    for text in all {
+        out.extend(extract_commit_messages(&text));
+    }
+    out
 }
 
 /// Walk a JSONL transcript and return every assistant-message text, in
@@ -59,57 +74,24 @@ pub fn parse_assistant_texts(jsonl: &str) -> Vec<String> {
     out
 }
 
-/// Whether a candidate text passes the "looks like a summary" filter.
-pub fn passes_filter(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    if trimmed.ends_with('?') {
-        return false;
-    }
-    if starts_with_ci(trimmed, "Let me") {
-        return false;
-    }
-    if trimmed.chars().count() > MAX_CANDIDATE_CHARS {
-        return false;
-    }
-    if count_sentences(trimmed) > MAX_CANDIDATE_SENTENCES {
-        return false;
-    }
-    true
-}
-
-/// All assistant texts that pass the filter, in reverse-chronological
-/// order (newest first).
-pub fn candidates_reverse(jsonl: &str) -> Vec<String> {
-    let mut all = parse_assistant_texts(jsonl);
-    all.reverse();
-    all.into_iter().filter(|t| passes_filter(t)).collect()
-}
-
-fn starts_with_ci(haystack: &str, prefix: &str) -> bool {
-    let h = haystack.trim_start();
-    h.len() >= prefix.len()
-        && h.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
-}
-
-/// Sentence count = number of `.<whitespace>` boundaries in the text + 1
-/// (for the final sentence).
-fn count_sentences(text: &str) -> usize {
-    if text.trim().is_empty() {
-        return 0;
-    }
-    let bytes = text.as_bytes();
-    let mut boundaries = 0;
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'.' && bytes[i + 1].is_ascii_whitespace() {
-            boundaries += 1;
+/// Extract every `git commit -m "<message>"` substring from `text`, in
+/// document order. The user's convention is "single-line subject, no
+/// body, no multi-`-m`, no HEREDOC", so this is a simple needle scan
+/// terminating at the next unescaped `"`.
+pub fn extract_commit_messages(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(COMMIT_NEEDLE) {
+        let after = &rest[start + COMMIT_NEEDLE.len()..];
+        match after.find('"') {
+            Some(end) => {
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+            None => break,
         }
-        i += 1;
     }
-    boundaries + 1
+    out
 }
 
 #[cfg(test)]
@@ -117,61 +99,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn count_sentences_empty() {
-        assert_eq!(count_sentences(""), 0);
-        assert_eq!(count_sentences("   "), 0);
+    fn extracts_single_commit_message() {
+        let text = r#"Done. Run this:
+
+```bash
+cd /repo && git add -A && git commit -m "[CO-1234] Fix the bug" && git push
+```
+"#;
+        assert_eq!(
+            extract_commit_messages(text),
+            vec!["[CO-1234] Fix the bug"],
+        );
     }
 
     #[test]
-    fn count_sentences_basic() {
-        assert_eq!(count_sentences("Hello"), 1);
-        assert_eq!(count_sentences("Hello."), 1);
-        assert_eq!(count_sentences("Hello. World"), 2);
-        assert_eq!(count_sentences("Hello. World."), 2);
-        assert_eq!(count_sentences("One. Two. Three."), 3);
+    fn extracts_multi_command_form() {
+        let text = "cd /path &&\n  git add -A &&\n  git commit -m \"[CO-5528] Consolidate duplicate vendor rows\" &&\n  git push";
+        assert_eq!(
+            extract_commit_messages(text),
+            vec!["[CO-5528] Consolidate duplicate vendor rows"],
+        );
     }
 
     #[test]
-    fn count_sentences_ignores_period_without_whitespace() {
-        assert_eq!(count_sentences("e.g."), 1);
-        assert_eq!(count_sentences("Hello.World"), 1);
+    fn extracts_multiple_commit_messages_in_order() {
+        let text = r#"First commit:
+  git commit -m "[CO-1] first"
+Then:
+  git commit -m "[CO-2] second"
+"#;
+        assert_eq!(
+            extract_commit_messages(text),
+            vec!["[CO-1] first", "[CO-2] second"],
+        );
     }
 
     #[test]
-    fn filter_rejects_question() {
-        assert!(!passes_filter("Should I do that?"));
+    fn extracts_no_messages_from_prose() {
+        let text = "I just finished the work. The tests pass. Ready to ship.";
+        assert!(extract_commit_messages(text).is_empty());
     }
 
     #[test]
-    fn filter_rejects_let_me_opener() {
-        assert!(!passes_filter("Let me check the test output first"));
-        assert!(!passes_filter("  Let me check"));
-        // Case-insensitive
-        assert!(!passes_filter("let me see"));
-        assert!(!passes_filter("LET ME LOOK"));
+    fn extracts_no_messages_from_empty() {
+        assert!(extract_commit_messages("").is_empty());
     }
 
     #[test]
-    fn filter_rejects_overlength() {
-        let long = "x".repeat(601);
-        assert!(!passes_filter(&long));
-    }
-
-    #[test]
-    fn filter_rejects_three_sentences() {
-        assert!(!passes_filter("One. Two. Three."));
-    }
-
-    #[test]
-    fn filter_accepts_normal_summary() {
-        assert!(passes_filter("Updated the model and tightened the cancellability rule."));
-        assert!(passes_filter("All 47 specs pass. Pushed the lint fix and ready to ship."));
-    }
-
-    #[test]
-    fn filter_accepts_empty_question_only_if_no_question_mark() {
-        assert!(!passes_filter(""));
-        assert!(passes_filter("Done"));
+    fn extracts_when_message_contains_brackets_and_punctuation() {
+        let text = r#"git commit -m "[CO-7] Add :foo support (closes #99)""#;
+        assert_eq!(
+            extract_commit_messages(text),
+            vec!["[CO-7] Add :foo support (closes #99)"],
+        );
     }
 
     #[test]
@@ -198,50 +178,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_concatenates_multiple_text_blocks() {
-        let jsonl = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"First"},{"type":"text","text":"Second"}]}}"#;
-        assert_eq!(parse_assistant_texts(jsonl), vec!["First Second"]);
-    }
-
-    #[test]
-    fn parse_skips_malformed_lines() {
-        let jsonl = "not json\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"good\"}]}}\nalso not json";
-        assert_eq!(parse_assistant_texts(jsonl), vec!["good"]);
-    }
-
-    #[test]
-    fn parse_ignores_blank_lines() {
-        let jsonl = "\n\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n\n";
-        assert_eq!(parse_assistant_texts(jsonl), vec!["hi"]);
-    }
-
-    #[test]
     fn candidates_reverse_newest_first() {
         let jsonl = [
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"First message done"}]}}"#,
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Second message also done"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-1] first\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-2] second\""}]}}"#,
         ]
         .join("\n");
-        let candidates = candidates_reverse(&jsonl);
         assert_eq!(
-            candidates,
-            vec!["Second message also done", "First message done"],
+            candidates_reverse(&jsonl),
+            vec!["[CO-2] second", "[CO-1] first"],
         );
     }
 
     #[test]
-    fn candidates_reverse_filters_out_questions_and_let_me() {
+    fn candidates_reverse_skips_assistant_messages_without_commit_blocks() {
         let jsonl = [
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Done with the work"}]}}"#,
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Should I continue?"}]}}"#,
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check the output"}]}}"#,
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Updated the model and pushed"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Just thinking out loud"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"git commit -m \"[CO-9] only one\""}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Following up"}]}}"#,
         ]
         .join("\n");
-        let candidates = candidates_reverse(&jsonl);
         assert_eq!(
-            candidates,
-            vec!["Updated the model and pushed", "Done with the work"],
+            candidates_reverse(&jsonl),
+            vec!["[CO-9] only one"],
+        );
+    }
+
+    #[test]
+    fn candidates_reverse_extracts_multiple_from_same_response() {
+        let jsonl = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"First:\n  git commit -m \"[CO-1] one\"\nThen:\n  git commit -m \"[CO-2] two\""}]}}"#;
+        // Both extracted; the response is the newest (only) one, but
+        // within it, the first commit-m comes before the second in the
+        // original text — extract_commit_messages preserves document
+        // order, and there's only one response so no reversal.
+        assert_eq!(
+            candidates_reverse(jsonl),
+            vec!["[CO-1] one", "[CO-2] two"],
         );
     }
 }

@@ -2,7 +2,6 @@ mod branch;
 mod cli;
 mod git;
 mod session;
-mod subject;
 mod worktree;
 
 use clap::Parser;
@@ -133,11 +132,14 @@ fn execute(args: cli::ShipArgs, push_mode: PushMode) -> Result<i32, ShipError> {
     let mut needs_redisplay = true;
 
     loop {
-        let subject = match &override_msg {
-            Some(t) => t.clone(),
-            None => subject::extract_subject(&candidates[cursor]),
+        // Auto-picked candidates are already complete commit messages
+        // (Claude crafted them with the ticket prefix). The `-m` / `[m]`
+        // override path runs through compose_message so an unprefixed
+        // subject gets the ticket prefix applied.
+        let message = match &override_msg {
+            Some(t) => compose_message(t, ticket.as_deref()),
+            None => candidates[cursor].clone(),
         };
-        let message = compose_message(&subject, ticket.as_deref());
 
         if needs_redisplay {
             print_preview(

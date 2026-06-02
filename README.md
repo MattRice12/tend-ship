@@ -37,10 +37,11 @@ Ship? [Y]es / [n]o / [p]revious / [m]essage override: y
 ✓ 8a3f912 [CO-5281] Move controller parsing into the shared module
 ```
 
-The proposed subject is drawn from the most recent assistant message in the
-session transcript that "looks like a summary" — short, not a question, not a
-mid-task narration. If the auto-pick isn't the one you want, hit `p` to walk
-back to an older candidate, or `m` to type your own subject.
+The proposed message is whatever Claude wrote in its most recent
+`git commit -m "<msg>"` block — Claude already crafts a commit message at
+the end of every response, so tend-ship just lifts it out of the transcript
+verbatim. If you'd rather use an older message Claude wrote, hit `p` to walk
+back. To type your own, hit `m` (or pass `-m "..."` from the start).
 
 ### Subcommands
 

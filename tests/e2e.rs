@@ -12,7 +12,9 @@ fn force_commits_and_pushes_with_ticket_prefix() {
     let world = TestWorld::new("CO-9999/e2e-happy-path");
     world.write_fixture_session(
         "session-abc",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Implement the feature and add tests"}]}}"#,
+        &assistant_text_jsonl(
+            r#"git commit -m "[CO-9999] Implement the feature and add tests""#,
+        ),
     );
     world.write_change("change.txt", "new content\n");
 
@@ -34,7 +36,7 @@ fn no_ticket_prefix_when_branch_doesnt_match() {
     let world = TestWorld::new("scratch/no-ticket-here");
     world.write_fixture_session(
         "session-noticket",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Made a quick fix"}]}}"#,
+        &assistant_text_jsonl(r#"git commit -m "Made a quick fix""#),
     );
     world.write_change("noted.txt", "x\n");
 
@@ -76,7 +78,7 @@ fn no_push_keeps_remote_untouched() {
     let world = TestWorld::new("CO-1111/no-push");
     world.write_fixture_session(
         "session-np",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Committed locally only"}]}}"#,
+        &assistant_text_jsonl(r#"git commit -m "[CO-1111] Committed locally only""#),
     );
     world.write_change("local.txt", "x\n");
 
@@ -134,9 +136,10 @@ fn worktree_falls_back_to_main_repo_session() {
 
     // Session lives ONLY in the main repo's encoded dir, not the worktree's.
     let main_session_dir = world.fixture_dir_for(&world.canonical_repo);
+    let jsonl = assistant_text_jsonl(r#"git commit -m "[CO-4444] Made the worktree edit""#);
     fs::write(
         main_session_dir.join("main-session.jsonl"),
-        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Made the worktree edit\"}]}}\n",
+        format!("{jsonl}\n"),
     )
     .unwrap();
 
@@ -166,9 +169,12 @@ fn worktree_resolved_by_name_from_main_repo() {
 
     // Session lives in the main repo's encoded dir (where Claude was launched).
     let main_session_dir = world.fixture_dir_for(&world.canonical_repo);
+    let jsonl = assistant_text_jsonl(
+        r#"git commit -m "[CO-5555] Made the change in the side worktree""#,
+    );
     fs::write(
         main_session_dir.join("main-session.jsonl"),
-        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Made the change in the side worktree\"}]}}\n",
+        format!("{jsonl}\n"),
     )
     .unwrap();
 
@@ -195,7 +201,7 @@ fn pfwl_uses_force_with_lease() {
     let world = TestWorld::new("CO-6000/fwl");
     world.write_fixture_session(
         "fwl-session",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Rewrote the history"}]}}"#,
+        &assistant_text_jsonl(r#"git commit -m "[CO-6000] Rewrote the history""#),
     );
     world.write_change("rewrite.txt", "y\n");
 
@@ -324,6 +330,25 @@ fn run_git(cwd: &Path, args: &[&str]) {
             String::from_utf8_lossy(&output.stderr),
         );
     }
+}
+
+/// Build an assistant-message JSONL line whose text content is `text`,
+/// with the minimum JSON-escaping needed for our fixtures (escape `\`,
+/// `"`, and `\n`). Real transcripts come from Claude itself, but in
+/// tests we hand-roll the strings.
+fn assistant_text_jsonl(text: &str) -> String {
+    let escaped: String = text
+        .chars()
+        .flat_map(|c| match c {
+            '\\' => vec!['\\', '\\'],
+            '"' => vec!['\\', '"'],
+            '\n' => vec!['\\', 'n'],
+            c => vec![c],
+        })
+        .collect();
+    format!(
+        r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{escaped}"}}]}}}}"#,
+    )
 }
 
 fn encode_path_for_test(path: &Path) -> String {

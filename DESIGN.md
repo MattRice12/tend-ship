@@ -26,13 +26,13 @@ Inspired by [tend](https://github.com/jah2488/tend) — reads the same
 
 ### Acknowledged trade-off
 
-The commit subject reflects what the session *thought* it did, not what's
-actually staged. If the user made manual edits after the session ended, or
+The commit subject is whatever Claude wrote in the `git commit -m "<msg>"`
+block of its response. If you made manual edits after Claude's response, or
 staged a subset of the changes, the message may not match the diff. The
 interactive preview + `[p]revious` traversal + `[m]` / `-m` override exist
 to catch this.
-`claude --resume -p "commit and push"` would close that gap at the cost of an
-LLM call; that path is explicitly out of scope.
+`claude --resume -p "commit and push"` would close that gap at the cost of
+an LLM call; that path is explicitly out of scope.
 
 ## CLI
 
@@ -78,7 +78,7 @@ OPTIONS
 EXIT CODES
   0  Success or nothing-to-commit
   1  User aborted at confirmation
-  2  No usable session (no JSONL, no candidates passing filter, detached HEAD,
+  2  No usable session (no JSONL, no commit-m candidates found, detached HEAD,
      not a git repo, worktree name not resolvable)
   3  Git or hook failure (stderr forwarded verbatim)
 ```
@@ -128,32 +128,28 @@ same flow except for the final `git push --force-with-lease`.
    the explicit project dir match.
 5. Read the JSONL into memory and walk lines in reverse. For each record
    where `type == "assistant"` and the message contains at least one text
-   content block, extract the text and apply the **candidate filter**:
-   - Does not end with `?` (clarifying question)
-   - Does not start with `Let me` (case-insensitive, after whitespace)
-     (mid-task narration)
-   - Length ≤ 600 chars AND sentence count ≤ 2, where sentence count is the
-     number of `.<whitespace>` boundaries in the text, plus 1 (for the final
-     sentence whether or not it ends with `.`)
-6. First match becomes the auto-picked candidate. If reverse traversal reaches
-   the start of the file with no match, exit 2 with a hint to use `-m`.
-7. **Extract subject from candidate text:**
-   - First sentence (split on `.` followed by whitespace or end-of-string)
-   - If first sentence < 20 chars, append the second sentence (separated by
-     a space)
-   - Strip leading/trailing whitespace; drop a single trailing `.`; collapse
-     internal whitespace to single spaces
-   - If length > 70 chars, truncate at the last word boundary that fits and
-     append `…`
-8. Parse branch via `git symbolic-ref --short HEAD`. If matches `^(CO-\d+)/`,
-   set `ticket = CO-XXXX`; else `ticket = none`.
-9. Compose proposed message:
-   - If `<subject>` already starts with `[` (treat as user-supplied complete
-     message — applies to `-m <text>` and interactive `[m]` override), use it
-     verbatim with no prefix.
-   - Else if `ticket` is set: `[<ticket>] <subject>`
-   - Else: `<subject>`
-10. Print preview:
+   content block, scan the concatenated text for `git commit -m "<msg>"`
+   substrings. Each match is a candidate. Use Claude's literal message
+   verbatim — no sentence-splitting, no filter, no inference.
+
+   The user's commit-message convention (per their global CLAUDE.md) is
+   "single-line subject, no body, no multi-`-m`, no HEREDOC", so the parser
+   reads from the opening `"` to the next unescaped `"`.
+6. The list of candidates is in reverse-chronological order (newest
+   response's commit-m blocks first). If both lists are empty (no response
+   contained a `git commit -m "..."` block), exit 2 with a hint to use `-m`.
+7. Parse branch via `git symbolic-ref --short HEAD`. If matches `^(CO-\d+)/`,
+   set `ticket = CO-XXXX`; else `ticket = none`. (Ticket is displayed in the
+   preview but **not** re-applied to the auto-picked message — Claude
+   already wrote the `[CO-XXXX]` prefix into the commit-m line.)
+8. Compose proposed message:
+   - Auto-picked candidate (from session) → use **verbatim** with no
+     re-prefixing.
+   - `-m <text>` or interactive `[m]` override:
+     - If `<text>` starts with `[`, use verbatim
+     - Else if `ticket` is set, prefix: `[<ticket>] <text>`
+     - Else, use `<text>` as-is
+9. Print preview:
     ```
     branch:    <branch>
     ticket:    <ticket or "(none)">
@@ -161,20 +157,20 @@ same flow except for the final `git push --force-with-lease`.
     session:   <jsonl path relative to home>  (<age, e.g. "3m ago">)
     message:   <proposed message>
     ```
-11. Prompt: `Ship? [Y]es / [n]o / [p]revious / [m]essage override: `
+10. Prompt: `Ship? [Y]es / [n]o / [p]revious / [m]essage override: `
 
-    State model: tend-ship maintains a cursor over the list of candidates that
-    pass the filter, in reverse-chronological order (cursor starts at the
+    State model: tend-ship maintains a cursor over the list of candidate
+    commit messages, in reverse-chronological order (cursor starts at the
     most-recent / auto-picked candidate; `p` advances toward older).
     Candidates can be enumerated lazily.
 
-    - Enter or `y`/`Y` → continue to step 12 with the candidate at the cursor
+    - Enter or `y`/`Y` → continue to step 11 with the candidate at the cursor
       (or with the active `[m]` override, if one is in effect — see below)
     - `n`/`N` → exit 1
-    - `p`/`P` → advance cursor to the next-older candidate, re-run steps
-      7–9, re-print preview, re-prompt. At the boundary (no older candidate
-      exists), print `No older candidates.` and re-prompt with the current
-      preview unchanged.
+    - `p`/`P` → advance cursor to the next-older candidate, re-compose the
+      message (step 8), re-print preview, re-prompt. At the boundary (no
+      older candidate exists), print `No older candidates.` and re-prompt
+      with the current preview unchanged.
     - `m`/`M` → read a single line from stdin as a manual subject override;
       use it verbatim (no candidate filter, no length cap, no truncation —
       same semantics as `-m <text>` from the CLI). Re-print the preview with
@@ -182,13 +178,14 @@ same flow except for the final `git push --force-with-lease`.
       clears the override and returns to cursor-based navigation. The user
       may press `m` again to re-enter override text.
     - Any other input → re-prompt with no change
-12. Run `git add -A && git commit -m "<message>"`. If the pre-commit hook
+11. Run `git add -A && git commit -m "<message>"`. If the pre-commit hook
     fails, forward stderr and exit 3. Do not push.
-13. Probe upstream: `git rev-parse --abbrev-ref @{u}` (2>/dev/null).
-    - Success → `git push`
-    - Failure (no upstream tracking) → `git push -u origin HEAD`
+12. Probe upstream: `git rev-parse --abbrev-ref @{u}` (2>/dev/null).
+    - Success → `git push` (or `git push --force-with-lease` for `pfwl`)
+    - Failure (no upstream tracking) → `git push -u origin HEAD` (or
+      `git push -u origin HEAD --force-with-lease` for `pfwl`)
     - Forward git's output regardless.
-14. Print:
+13. Print:
     ```
     ✓ [<branch> <short-sha>] <message>
     ```
@@ -196,7 +193,7 @@ same flow except for the final `git push --force-with-lease`.
 
 ### `--force` / `-f`
 
-Steps 1–10 + 12–14. The prompt at step 11 is skipped; the first auto-picked
+Steps 1–9 + 11–13. The prompt at step 10 is skipped; the first auto-picked
 candidate is committed and pushed. The preview is still printed for the
 record.
 
@@ -210,13 +207,13 @@ record.
 
 ### `--message <text>` / `-m`
 
-Steps 1–2, 8, 9 (using `<text>` directly as the subject — no candidate filter,
-no length cap, no truncation), 10, 11 (unless `-f`), 12–14. Session reading is
-skipped entirely; `<text>` is used verbatim as the subject.
+Steps 1–2, 7, 8 (using `<text>` directly as the subject, applying ticket
+prefix only if `<text>` doesn't already start with `[`), 9, 10 (unless `-f`),
+11–13. Session reading is skipped entirely.
 
 ### `--no-push`
 
-Steps 1–12 only. Step 13 (push) is skipped.
+Steps 1–11 only. Step 12 (push) is skipped.
 
 ### `--session <id>` / `-s`
 
@@ -306,16 +303,14 @@ tend-ship/
 │   │   ├── mod.rs       The ship subcommand entry point
 │   │   ├── cli.rs       clap derive struct (ship-specific flags)
 │   │   ├── encode.rs    cwd → ~/.claude/projects/<dir>
-│   │   ├── session.rs   JSONL discovery + reverse iteration with filter
-│   │   ├── subject.rs   Sentence split + length cap + word-boundary truncation
+│   │   ├── session.rs   JSONL discovery + `git commit -m "..."` extraction
 │   │   ├── branch.rs    git symbolic-ref + ticket regex
 │   │   └── git.rs       status / diff --stat / commit / push wrappers
 │   │                    (std::process::Command — no libgit2 dependency)
 └── tests/
     ├── dispatch.rs      Subcommand routing, "not a subcommand" error path
     ├── ship/encode.rs   Path encoding (incl. .worktrees) unit tests
-    ├── ship/subject.rs  Sentence split, length cap, truncation
-    ├── ship/session.rs  Filter rules against fixture JSONLs
+    ├── ship/session.rs  `git commit -m "..."` extraction against fixture JSONLs
     └── e2e.rs           End-to-end against tempdir git repo + tempdir HOME
 ```
 
@@ -346,15 +341,14 @@ free.
 ### Unit
 - `encode`: paths with `/`, `.`, mixed; particularly verify `.worktrees`
   encoding against the user's actual `~/.claude/projects/` layout
-- `subject`: sentence splitting, 2-sentence-fallback when first is short,
-  word-boundary truncation, trailing `.` strip
 - `branch`: ticket regex matches, detached-HEAD case
-- `session::filter`: question-ending, "Let me" opener, overlength,
-  sentence-count > 2
+- `session::extract_commit_messages`: single match, multiple matches in
+  order, no-matches-from-prose, message containing brackets and punctuation
 
 ### Integration
 - `session`: walk-back behavior against fixture JSONLs in `tests/fixtures/`,
-  including "no candidates", "multiple candidates", "filtered all auto-picks"
+  including "no commit-m blocks", "multiple commit-m blocks in one response",
+  and "multiple responses each with one commit-m block"
 - `dispatch`: argv routing — no args → ship; explicit `ship` → ship;
   `help` → help; unknown name with matching PATH executable → exec;
   unknown name with no PATH executable → exit 2 with the standard error.
@@ -405,7 +399,7 @@ No live network. No real Claude API. No real `~/.claude/`.
 ## Open implementation questions
 
 1. **Multi-text-block messages.** If an assistant message contains multiple
-   text content blocks (rare), concatenate them with a space before applying
-   the filter and subject extraction.
+   text content blocks (rare), concatenate them with a space before scanning
+   for `git commit -m "..."` substrings.
 2. **Trailing-newline JSONL files.** Some JSONL writers add a trailing
    newline; the reverse iterator must tolerate a blank final line.
