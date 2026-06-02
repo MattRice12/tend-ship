@@ -102,7 +102,8 @@ The behavior of `tend-ship` and `tend-ship ship` is identical.
    - Does not start with `Let me` (case-insensitive, after whitespace)
      (mid-task narration)
    - Length ≤ 600 chars AND sentence count ≤ 2, where sentence count is the
-     count of `.` followed by whitespace or end-of-string, plus 1
+     number of `.<whitespace>` boundaries in the text, plus 1 (for the final
+     sentence whether or not it ends with `.`)
 6. First match becomes the auto-picked candidate. If reverse traversal reaches
    the start of the file with no match, exit 2 with a hint to use `-m`.
 7. **Extract subject from candidate text:**

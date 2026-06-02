@@ -7,3 +7,4 @@ license = "MIT"
 repository = "https://github.com/MattRice12/tend-ship"
 
 [dependencies]
+serde_json = "1"

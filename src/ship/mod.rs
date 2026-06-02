@@ -1,4 +1,6 @@
 mod branch;
+mod session;
+mod subject;
 
 pub fn run(_args: &[String]) -> i32 {
     eprintln!("tend-ship ship: not yet implemented");
