@@ -21,6 +21,19 @@ cargo install --path .
 After install, `tend-ship` is available anywhere `~/.cargo/bin` is in your
 PATH.
 
+## Update
+
+After pulling new changes, rebuild and replace the installed binary:
+
+```sh
+cd tend-ship
+git pull
+cargo install --path . --force
+```
+
+`--force` is what reinstalls over the existing binary; without it, cargo
+refuses to overwrite an already-installed `tend-ship`.
+
 ## Usage
 
 From inside a worktree where Claude Code has been running:
